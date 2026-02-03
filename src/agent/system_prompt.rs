@@ -103,6 +103,21 @@ pub fn build_system_prompt(params: SystemPromptParams) -> String {
     );
     lines.push(String::new());
 
+    // Memory recall guidance
+    if params.tool_names.iter().any(|t| *t == "memory_search") {
+        lines.push("## Memory Recall".to_string());
+        lines.push(
+            "Before answering questions about prior work, decisions, dates, people, preferences, \
+             or todos: use memory_search to check MEMORY.md and memory/*.md files first."
+                .to_string(),
+        );
+        lines.push(
+            "If unsure after searching, mention that you checked but found no relevant notes."
+                .to_string(),
+        );
+        lines.push(String::new());
+    }
+
     // Silent replies section
     lines.push("## Silent Replies".to_string());
     lines.push(format!(
