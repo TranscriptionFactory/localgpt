@@ -76,7 +76,8 @@ impl MemoryManager {
         std::fs::create_dir_all(&memory_dir)?;
         let db_path = memory_dir.join(format!("{}.sqlite", agent_id));
 
-        let index = MemoryIndex::new_with_db_path(&workspace, &db_path)?;
+        let index = MemoryIndex::new_with_db_path(&workspace, &db_path)?
+            .with_chunk_config(config.chunk_size, config.chunk_overlap);
 
         Ok(Self {
             workspace,

@@ -18,6 +18,10 @@ pub struct MemoryIndex {
     db_path: PathBuf,
     /// Whether sqlite-vec extension is loaded for fast vector search
     has_vec_extension: bool,
+    /// Token count per chunk (default: 400)
+    chunk_size: usize,
+    /// Token overlap between chunks (default: 80)
+    chunk_overlap: usize,
 }
 
 #[derive(Debug)]
@@ -117,7 +121,16 @@ impl MemoryIndex {
             workspace: workspace.to_path_buf(),
             db_path: db_path.to_path_buf(),
             has_vec_extension,
+            chunk_size: 400,
+            chunk_overlap: 80,
         })
+    }
+
+    /// Set chunk size and overlap (builder pattern)
+    pub fn with_chunk_config(mut self, chunk_size: usize, chunk_overlap: usize) -> Self {
+        self.chunk_size = chunk_size;
+        self.chunk_overlap = chunk_overlap;
+        self
     }
 
     /// Try to load sqlite-vec extension
@@ -226,7 +239,7 @@ impl MemoryIndex {
         Self::delete_chunks_for_path(&conn, &relative_path)?;
 
         // Create new chunks (OpenClaw-compatible)
-        let chunks = chunk_text(&content, 400, 80);
+        let chunks = chunk_text(&content, self.chunk_size, self.chunk_overlap);
 
         for chunk in chunks.iter() {
             let chunk_id = Uuid::new_v4().to_string();

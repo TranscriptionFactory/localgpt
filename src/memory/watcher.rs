@@ -80,10 +80,11 @@ impl MemoryWatcher {
         // Spawn background task to handle events
         let workspace_for_task = workspace.clone();
         let db_path_for_task = db_path.clone();
+        let chunk_size = config.chunk_size;
+        let chunk_overlap = config.chunk_overlap;
         std::thread::spawn(move || {
-            let index = match MemoryIndex::new_with_db_path(&workspace_for_task, &db_path_for_task)
-            {
-                Ok(idx) => idx,
+            let index = match MemoryIndex::new_with_db_path(&workspace_for_task, &db_path_for_task) {
+                Ok(idx) => idx.with_chunk_config(chunk_size, chunk_overlap),
                 Err(e) => {
                     warn!("Failed to create memory index for watcher: {}", e);
                     return;
