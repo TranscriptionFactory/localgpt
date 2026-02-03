@@ -63,7 +63,6 @@ impl MemoryWatcher {
             };
 
             // Debounce events
-            let mut last_event_time = std::time::Instant::now();
             let debounce_duration = Duration::from_secs(2);
 
             loop {
@@ -72,7 +71,7 @@ impl MemoryWatcher {
                         debug!("File changed: {}", path.display());
 
                         // Debounce: wait for events to settle
-                        last_event_time = std::time::Instant::now();
+                        let mut last_event_time = std::time::Instant::now();
                         while last_event_time.elapsed() < debounce_duration {
                             match rx.recv_timeout(debounce_duration - last_event_time.elapsed()) {
                                 Ok(p) => {

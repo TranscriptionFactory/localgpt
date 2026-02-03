@@ -701,20 +701,6 @@ impl ClaudeCliProvider {
         })
     }
 
-    /// Clear the persisted CLI session, starting fresh on next call
-    pub fn clear_session(&self) -> Result<()> {
-        let mut session = self
-            .cli_session_id
-            .lock()
-            .map_err(|e| anyhow::anyhow!("Session lock poisoned: {}", e))?;
-        *session = None;
-
-        // Clear from session store
-        clear_cli_session_from_store(&self.session_key, CLAUDE_CLI_PROVIDER)?;
-        debug!("Cleared CLI session for key: {}", self.session_key);
-
-        Ok(())
-    }
 }
 
 /// Load CLI session ID from session store
@@ -736,20 +722,6 @@ fn save_cli_session_to_store(
 
     let mut store = SessionStore::load()?;
     store.set_cli_session_id(session_key, session_id, provider, cli_session_id)?;
-    Ok(())
-}
-
-/// Clear CLI session ID from session store
-fn clear_cli_session_from_store(session_key: &str, provider: &str) -> Result<()> {
-    use super::session_store::SessionStore;
-
-    let mut store = SessionStore::load()?;
-    store.update(session_key, "", |entry| {
-        entry.cli_session_ids.remove(provider);
-        if provider == "claude-cli" {
-            entry.claude_cli_session_id = None;
-        }
-    })?;
     Ok(())
 }
 

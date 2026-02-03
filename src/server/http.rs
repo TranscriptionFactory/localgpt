@@ -122,6 +122,7 @@ async fn status(State(state): State<Arc<AppState>>) -> Json<StatusResponse> {
 #[derive(Deserialize)]
 struct ChatRequest {
     message: String,
+    #[allow(dead_code)] // TODO: implement model switching per request
     model: Option<String>,
 }
 

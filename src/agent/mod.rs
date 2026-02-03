@@ -309,6 +309,39 @@ impl Agent {
         self.session.status()
     }
 
+    /// Stream chat response - returns a stream of chunks
+    /// After consuming the stream, call `finish_chat_stream` with the full response
+    pub async fn chat_stream(&mut self, message: &str) -> Result<StreamResult> {
+        // Add user message
+        self.session.add_message(Message {
+            role: Role::User,
+            content: message.to_string(),
+            tool_calls: None,
+            tool_call_id: None,
+        });
+
+        // Check if we need to compact
+        if self.should_compact() {
+            self.compact_session().await?;
+        }
+
+        // Build messages for LLM
+        let messages = self.session.messages_for_llm();
+
+        // Get stream from provider (no tools for streaming)
+        self.provider.chat_stream(&messages, None).await
+    }
+
+    /// Complete a streaming chat by adding the assistant response to the session
+    pub fn finish_chat_stream(&mut self, response: &str) {
+        self.session.add_message(Message {
+            role: Role::Assistant,
+            content: response.to_string(),
+            tool_calls: None,
+            tool_call_id: None,
+        });
+    }
+
     /// Get a reference to the LLM provider for streaming
     pub fn provider(&self) -> &dyn LLMProvider {
         &*self.provider

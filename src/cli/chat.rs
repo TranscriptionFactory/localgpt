@@ -1,5 +1,6 @@
 use anyhow::Result;
 use clap::Args;
+use futures::StreamExt;
 use std::io::{self, BufRead, Write};
 
 use localgpt::agent::{Agent, AgentConfig};
@@ -73,13 +74,31 @@ pub async fn run(args: ChatArgs) -> Result<()> {
             }
         }
 
-        // Send message to agent
+        // Send message to agent with streaming
         print!("\nLocalGPT: ");
         stdout.flush()?;
 
-        match agent.chat(input).await {
-            Ok(response) => {
-                println!("{}\n", response);
+        match agent.chat_stream(input).await {
+            Ok(mut stream) => {
+                let mut full_response = String::new();
+
+                while let Some(result) = stream.next().await {
+                    match result {
+                        Ok(chunk) => {
+                            print!("{}", chunk.delta);
+                            stdout.flush()?;
+                            full_response.push_str(&chunk.delta);
+                        }
+                        Err(e) => {
+                            eprintln!("\nStream error: {}", e);
+                            break;
+                        }
+                    }
+                }
+
+                // Add the response to session history
+                agent.finish_chat_stream(&full_response);
+                println!("\n");
             }
             Err(e) => {
                 eprintln!("Error: {}\n", e);
