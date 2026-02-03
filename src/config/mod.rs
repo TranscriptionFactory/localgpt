@@ -150,9 +150,8 @@ pub struct LoggingConfig {
 
 // Default value functions
 fn default_model() -> String {
-    // Default to Anthropic API (requires ANTHROPIC_API_KEY)
-    // OpenClaw-compatible format: provider/model-id
-    "anthropic/claude-opus-4-5".to_string()
+    // Default to Claude CLI (uses existing Claude Code auth, no API key needed)
+    "claude-cli/opus".to_string()
 }
 fn default_context_window() -> usize {
     128000

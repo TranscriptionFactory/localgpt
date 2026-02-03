@@ -24,7 +24,7 @@
 # Ollama (local):
 #   - "ollama/llama3", "ollama/mistral", etc.
 #
-default_model = "anthropic/claude-opus-4-5"
+default_model = "claude-cli/opus"
 
 # Context window size (in tokens)
 context_window = 128000

@@ -43,7 +43,7 @@ Configuration is stored at `~/.localgpt/config.toml`:
 
 ```toml
 [agent]
-default_model = "gpt-4"
+default_model = "claude-cli/opus"
 context_window = 128000
 reserve_tokens = 8000
 
