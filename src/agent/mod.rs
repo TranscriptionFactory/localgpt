@@ -88,6 +88,20 @@ impl Agent {
         &self.config.model
     }
 
+    /// Check if a tool requires user approval before execution
+    pub fn requires_approval(&self, tool_name: &str) -> bool {
+        self.app_config
+            .tools
+            .require_approval
+            .iter()
+            .any(|t| t == tool_name)
+    }
+
+    /// Get the list of tools that require approval
+    pub fn approval_required_tools(&self) -> &[String] {
+        &self.app_config.tools.require_approval
+    }
+
     /// Switch to a different model
     pub fn set_model(&mut self, model: &str) -> Result<()> {
         let provider = providers::create_provider(model, &self.app_config)?;

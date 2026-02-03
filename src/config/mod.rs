@@ -58,6 +58,11 @@ pub struct ToolsConfig {
     /// Maximum bytes to return from web_fetch
     #[serde(default = "default_web_fetch_max_bytes")]
     pub web_fetch_max_bytes: usize,
+
+    /// Tools that require user approval before execution
+    /// e.g., ["bash", "write_file", "edit_file"]
+    #[serde(default)]
+    pub require_approval: Vec<String>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -272,6 +277,7 @@ impl Default for ToolsConfig {
         Self {
             bash_timeout_ms: default_bash_timeout(),
             web_fetch_max_bytes: default_web_fetch_max_bytes(),
+            require_approval: Vec::new(),
         }
     }
 }

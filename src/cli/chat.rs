@@ -328,28 +328,56 @@ pub async fn run(args: ChatArgs, agent_id: &str) -> Result<()> {
 
                 // Handle tool calls if any
                 if let Some(tool_calls) = pending_tool_calls {
-                    // Show tool execution with details
-                    for tc in &tool_calls {
+                    // Check for tools requiring approval
+                    let mut approved_calls = Vec::new();
+                    let mut any_denied = false;
+
+                    for tc in tool_calls {
                         let detail = extract_tool_detail(&tc.name, &tc.arguments);
-                        if let Some(d) = detail {
+                        if let Some(ref d) = detail {
                             println!("\n[{}: {}]", tc.name, d);
                         } else {
                             println!("\n[{}]", tc.name);
                         }
+
+                        if agent.requires_approval(&tc.name) {
+                            // Prompt for approval
+                            print!("Execute {}? [y/N]: ", tc.name);
+                            stdout.flush()?;
+
+                            let mut input = String::new();
+                            std::io::stdin().read_line(&mut input)?;
+                            let input = input.trim().to_lowercase();
+
+                            if input == "y" || input == "yes" {
+                                approved_calls.push(tc);
+                            } else {
+                                println!("Skipped: {}", tc.name);
+                                any_denied = true;
+                            }
+                        } else {
+                            approved_calls.push(tc);
+                        }
                     }
                     stdout.flush()?;
 
-                    match agent
-                        .execute_streaming_tool_calls(&full_response, tool_calls)
-                        .await
-                    {
-                        Ok(follow_up) => {
-                            print!("{}", follow_up);
-                            stdout.flush()?;
+                    if !approved_calls.is_empty() {
+                        match agent
+                            .execute_streaming_tool_calls(&full_response, approved_calls)
+                            .await
+                        {
+                            Ok(follow_up) => {
+                                print!("{}", follow_up);
+                                stdout.flush()?;
+                            }
+                            Err(e) => {
+                                eprintln!("Tool execution error: {}", e);
+                            }
                         }
-                        Err(e) => {
-                            eprintln!("Tool execution error: {}", e);
-                        }
+                    } else if any_denied {
+                        // All tools were denied, just finish the stream
+                        agent.finish_chat_stream(&full_response);
+                        println!("\n(Tool execution skipped)");
                     }
                 } else {
                     // No tool calls - just finish the stream
