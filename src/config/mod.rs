@@ -150,7 +150,8 @@ pub struct LoggingConfig {
 
 // Default value functions
 fn default_model() -> String {
-    "claude-cli/opus".to_string()
+    // Default to Anthropic API (requires ANTHROPIC_API_KEY)
+    "claude-sonnet-4-5-20250514".to_string()
 }
 fn default_context_window() -> usize {
     128000

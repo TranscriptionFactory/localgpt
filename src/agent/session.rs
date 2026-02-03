@@ -354,7 +354,12 @@ pub fn list_sessions_for_agent(agent_id: &str) -> Result<Vec<SessionInfo>> {
 
 /// Get the most recent session ID
 pub fn get_last_session_id() -> Result<Option<String>> {
-    let sessions = list_sessions()?;
+    get_last_session_id_for_agent(DEFAULT_AGENT_ID)
+}
+
+/// Get the most recent session ID for a specific agent
+pub fn get_last_session_id_for_agent(agent_id: &str) -> Result<Option<String>> {
+    let sessions = list_sessions_for_agent(agent_id)?;
     Ok(sessions.first().map(|s| s.id.clone()))
 }
 

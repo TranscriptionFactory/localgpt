@@ -40,9 +40,9 @@ pub enum MemoryCommands {
     },
 }
 
-pub async fn run(args: MemoryArgs) -> Result<()> {
+pub async fn run(args: MemoryArgs, agent_id: &str) -> Result<()> {
     let config = Config::load()?;
-    let memory = MemoryManager::new(&config.memory)?;
+    let memory = MemoryManager::new_with_agent(&config.memory, agent_id)?;
 
     match args.command {
         MemoryCommands::Search { query, limit } => search_memory(&memory, &query, limit).await,

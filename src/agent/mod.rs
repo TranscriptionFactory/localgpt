@@ -10,8 +10,8 @@ pub use providers::{
     ToolSchema,
 };
 pub use session::{
-    get_last_session_id, get_sessions_dir_for_agent, get_state_dir, list_sessions, Session,
-    SessionInfo, SessionStatus, DEFAULT_AGENT_ID,
+    get_last_session_id, get_last_session_id_for_agent, get_sessions_dir_for_agent, get_state_dir,
+    list_sessions, list_sessions_for_agent, Session, SessionInfo, SessionStatus, DEFAULT_AGENT_ID,
 };
 pub use session_store::{SessionEntry, SessionStore};
 pub use system_prompt::{
@@ -212,10 +212,37 @@ impl Agent {
     async fn build_memory_context(&self) -> Result<String> {
         let mut context = String::new();
 
-        // Load SOUL.md first (persona/tone) - this defines who the agent is
+        // Load IDENTITY.md first (OpenClaw-compatible: agent identity context)
+        if let Ok(identity_content) = self.memory.read_identity_file() {
+            if !identity_content.is_empty() {
+                context.push_str("# Identity (IDENTITY.md)\n\n");
+                context.push_str(&identity_content);
+                context.push_str("\n\n---\n\n");
+            }
+        }
+
+        // Load USER.md (OpenClaw-compatible: user info)
+        if let Ok(user_content) = self.memory.read_user_file() {
+            if !user_content.is_empty() {
+                context.push_str("# User Info (USER.md)\n\n");
+                context.push_str(&user_content);
+                context.push_str("\n\n---\n\n");
+            }
+        }
+
+        // Load SOUL.md (persona/tone) - this defines who the agent is
         if let Ok(soul_content) = self.memory.read_soul_file() {
             if !soul_content.is_empty() {
                 context.push_str(&soul_content);
+                context.push_str("\n\n---\n\n");
+            }
+        }
+
+        // Load AGENTS.md (OpenClaw-compatible: list of connected agents)
+        if let Ok(agents_content) = self.memory.read_agents_file() {
+            if !agents_content.is_empty() {
+                context.push_str("# Available Agents (AGENTS.md)\n\n");
+                context.push_str(&agents_content);
                 context.push_str("\n\n---\n\n");
             }
         }
@@ -243,7 +270,7 @@ impl Agent {
             if !heartbeat.is_empty() {
                 context.push_str("# Pending Tasks (HEARTBEAT.md)\n\n");
                 context.push_str(&heartbeat);
-                context.push_str("\n");
+                context.push('\n');
             }
         }
 

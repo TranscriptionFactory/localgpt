@@ -50,7 +50,13 @@ pub struct RecentEntry {
 }
 
 impl MemoryManager {
+    /// Create a new MemoryManager with the default agent ID ("main")
     pub fn new(config: &MemoryConfig) -> Result<Self> {
+        Self::new_with_agent(config, "main")
+    }
+
+    /// Create a new MemoryManager for a specific agent ID (OpenClaw-compatible)
+    pub fn new_with_agent(config: &MemoryConfig, agent_id: &str) -> Result<Self> {
         let workspace = shellexpand::tilde(&config.workspace).to_string();
         let workspace = PathBuf::from(workspace);
 
@@ -58,13 +64,12 @@ impl MemoryManager {
         init_workspace(&workspace)?;
 
         // Database goes in state_dir/memory/{agentId}.sqlite (OpenClaw-compatible)
-        // For now, we use "main" as the agent ID
         let state_dir = workspace
             .parent()
             .ok_or_else(|| anyhow::anyhow!("Workspace has no parent directory"))?;
         let memory_dir = state_dir.join("memory");
         std::fs::create_dir_all(&memory_dir)?;
-        let db_path = memory_dir.join("main.sqlite");
+        let db_path = memory_dir.join(format!("{}.sqlite", agent_id));
 
         let index = MemoryIndex::new_with_db_path(&workspace, &db_path)?;
 
@@ -102,6 +107,36 @@ impl MemoryManager {
     /// Read the SOUL.md file (persona/tone guidance)
     pub fn read_soul_file(&self) -> Result<String> {
         let path = self.workspace.join("SOUL.md");
+        if path.exists() {
+            Ok(fs::read_to_string(&path)?)
+        } else {
+            Ok(String::new())
+        }
+    }
+
+    /// Read the USER.md file (OpenClaw-compatible: user info)
+    pub fn read_user_file(&self) -> Result<String> {
+        let path = self.workspace.join("USER.md");
+        if path.exists() {
+            Ok(fs::read_to_string(&path)?)
+        } else {
+            Ok(String::new())
+        }
+    }
+
+    /// Read the IDENTITY.md file (OpenClaw-compatible: agent identity context)
+    pub fn read_identity_file(&self) -> Result<String> {
+        let path = self.workspace.join("IDENTITY.md");
+        if path.exists() {
+            Ok(fs::read_to_string(&path)?)
+        } else {
+            Ok(String::new())
+        }
+    }
+
+    /// Read the AGENTS.md file (OpenClaw-compatible: list of agents)
+    pub fn read_agents_file(&self) -> Result<String> {
+        let path = self.workspace.join("AGENTS.md");
         if path.exists() {
             Ok(fs::read_to_string(&path)?)
         } else {

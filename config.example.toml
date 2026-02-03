@@ -3,8 +3,12 @@
 
 [agent]
 # Default model to use for chat
-# Use "claude-cli/opus", "claude-cli/sonnet", or "claude-cli/haiku" for Claude CLI
-default_model = "claude-cli/opus"
+# Options:
+#   - "claude-sonnet-4-5-20250514" (Anthropic API, default)
+#   - "claude-3-opus-20240229" (Anthropic API)
+#   - "claude-cli/opus", "claude-cli/sonnet", "claude-cli/haiku" (Claude CLI)
+#   - "gpt-4", "gpt-4o", "gpt-4o-mini" (OpenAI API)
+default_model = "claude-sonnet-4-5-20250514"
 
 # Context window size (in tokens)
 context_window = 128000
@@ -12,15 +16,16 @@ context_window = 128000
 # Reserve tokens for response
 reserve_tokens = 8000
 
-# OpenAI configuration
-[providers.openai]
-api_key = "${OPENAI_API_KEY}"
-base_url = "https://api.openai.com/v1"
+# Anthropic configuration (REQUIRED for default model)
+# Get your API key at: https://console.anthropic.com/
+[providers.anthropic]
+api_key = "${ANTHROPIC_API_KEY}"  # Set: export ANTHROPIC_API_KEY="sk-ant-..."
+base_url = "https://api.anthropic.com"
 
-# Anthropic configuration (optional)
-# [providers.anthropic]
-# api_key = "${ANTHROPIC_API_KEY}"
-# base_url = "https://api.anthropic.com"
+# OpenAI configuration (optional)
+# [providers.openai]
+# api_key = "${OPENAI_API_KEY}"
+# base_url = "https://api.openai.com/v1"
 
 # Ollama configuration (for local models)
 # [providers.ollama]
@@ -29,9 +34,9 @@ base_url = "https://api.openai.com/v1"
 
 # Claude CLI configuration (uses local claude CLI command)
 # Requires claude CLI to be installed: https://github.com/anthropics/claude-code
-[providers.claude_cli]
-command = "claude"
-model = "opus"  # opus, sonnet, or haiku
+# [providers.claude_cli]
+# command = "claude"
+# model = "opus"  # opus, sonnet, or haiku
 
 [heartbeat]
 # Enable automatic heartbeat

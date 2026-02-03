@@ -5,7 +5,9 @@ use rustyline::error::ReadlineError;
 use rustyline::DefaultEditor;
 use std::io::{self, Write};
 
-use localgpt::agent::{get_last_session_id, list_sessions, Agent, AgentConfig};
+use localgpt::agent::{
+    list_sessions_for_agent, get_last_session_id_for_agent, Agent, AgentConfig,
+};
 use localgpt::config::Config;
 use localgpt::memory::MemoryManager;
 
@@ -24,9 +26,9 @@ pub struct ChatArgs {
     pub resume: bool,
 }
 
-pub async fn run(args: ChatArgs) -> Result<()> {
+pub async fn run(args: ChatArgs, agent_id: &str) -> Result<()> {
     let config = Config::load()?;
-    let memory = MemoryManager::new(&config.memory)?;
+    let memory = MemoryManager::new_with_agent(&config.memory, agent_id)?;
 
     let agent_config = AgentConfig {
         model: args.model.unwrap_or(config.agent.default_model.clone()),
@@ -40,7 +42,7 @@ pub async fn run(args: ChatArgs) -> Result<()> {
     let session_id = if let Some(id) = args.session {
         Some(id)
     } else if args.resume {
-        get_last_session_id()?
+        get_last_session_id_for_agent(agent_id)?
     } else {
         None
     };
@@ -66,12 +68,16 @@ pub async fn run(args: ChatArgs) -> Result<()> {
     }
 
     println!(
-        "LocalGPT v{} | Model: {} | Memory: {} chunks indexed\n",
+        "LocalGPT v{} | Agent: {} | Model: {} | Memory: {} chunks indexed\n",
         env!("CARGO_PKG_VERSION"),
+        agent_id,
         agent.model(),
         agent.memory_chunk_count()
     );
     println!("Type /help for commands, /quit to exit\n");
+
+    // Store agent_id for command handling
+    let agent_id = agent_id.to_string();
 
     let mut rl = DefaultEditor::new()?;
     let mut stdout = io::stdout();
@@ -104,7 +110,7 @@ pub async fn run(args: ChatArgs) -> Result<()> {
 
         // Handle commands
         if input.starts_with('/') {
-            match handle_command(input, &mut agent).await {
+            match handle_command(input, &mut agent, &agent_id).await {
                 CommandResult::Continue => continue,
                 CommandResult::Quit => break,
                 CommandResult::Error(e) => {
@@ -159,7 +165,7 @@ enum CommandResult {
     Error(String),
 }
 
-async fn handle_command(input: &str, agent: &mut Agent) -> CommandResult {
+async fn handle_command(input: &str, agent: &mut Agent, agent_id: &str) -> CommandResult {
     let parts: Vec<&str> = input.split_whitespace().collect();
     let cmd = parts[0];
 
@@ -183,7 +189,7 @@ async fn handle_command(input: &str, agent: &mut Agent) -> CommandResult {
         }
 
         "/sessions" => {
-            match list_sessions() {
+            match list_sessions_for_agent(agent_id) {
                 Ok(sessions) => {
                     if sessions.is_empty() {
                         println!("\nNo saved sessions found.\n");
@@ -216,7 +222,7 @@ async fn handle_command(input: &str, agent: &mut Agent) -> CommandResult {
             let session_id = parts[1];
 
             // Find session by prefix match
-            match list_sessions() {
+            match list_sessions_for_agent(agent_id) {
                 Ok(sessions) => {
                     let matching: Vec<_> = sessions
                         .iter()

@@ -17,10 +17,17 @@ pub struct HeartbeatRunner {
     interval: Duration,
     active_hours: Option<(NaiveTime, NaiveTime)>,
     workspace: PathBuf,
+    agent_id: String,
 }
 
 impl HeartbeatRunner {
+    /// Create a new HeartbeatRunner with the default agent ID ("main")
     pub fn new(config: &Config) -> Result<Self> {
+        Self::new_with_agent(config, "main")
+    }
+
+    /// Create a new HeartbeatRunner for a specific agent ID
+    pub fn new_with_agent(config: &Config, agent_id: &str) -> Result<Self> {
         let interval = parse_duration(&config.heartbeat.interval)
             .map_err(|e| anyhow::anyhow!("Invalid heartbeat interval: {}", e))?;
 
@@ -45,6 +52,7 @@ impl HeartbeatRunner {
             interval,
             active_hours,
             workspace,
+            agent_id: agent_id.to_string(),
         })
     }
 
@@ -98,7 +106,7 @@ impl HeartbeatRunner {
         }
 
         // Create agent for heartbeat
-        let memory = MemoryManager::new(&self.config.memory)?;
+        let memory = MemoryManager::new_with_agent(&self.config.memory, &self.agent_id)?;
         let agent_config = AgentConfig {
             model: self.config.agent.default_model.clone(),
             context_window: self.config.agent.context_window,

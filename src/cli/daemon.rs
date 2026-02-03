@@ -33,16 +33,16 @@ pub enum DaemonCommands {
     Heartbeat,
 }
 
-pub async fn run(args: DaemonArgs) -> Result<()> {
+pub async fn run(args: DaemonArgs, agent_id: &str) -> Result<()> {
     match args.command {
-        DaemonCommands::Start { foreground } => start_daemon(foreground).await,
+        DaemonCommands::Start { foreground } => start_daemon(foreground, agent_id).await,
         DaemonCommands::Stop => stop_daemon().await,
         DaemonCommands::Status => show_status().await,
-        DaemonCommands::Heartbeat => run_heartbeat_once().await,
+        DaemonCommands::Heartbeat => run_heartbeat_once(agent_id).await,
     }
 }
 
-async fn start_daemon(foreground: bool) -> Result<()> {
+async fn start_daemon(foreground: bool, agent_id: &str) -> Result<()> {
     let config = Config::load()?;
 
     // Check if already running
@@ -66,10 +66,10 @@ async fn start_daemon(foreground: bool) -> Result<()> {
     // Write PID file
     fs::write(&pid_file, std::process::id().to_string())?;
 
-    println!("Starting LocalGPT daemon...");
+    println!("Starting LocalGPT daemon (agent: {})...", agent_id);
 
     // Initialize components
-    let memory = MemoryManager::new(&config.memory)?;
+    let memory = MemoryManager::new_with_agent(&config.memory, agent_id)?;
 
     // Start memory file watcher
     let _watcher = memory.start_watcher()?;
@@ -184,11 +184,11 @@ async fn show_status() -> Result<()> {
     Ok(())
 }
 
-async fn run_heartbeat_once() -> Result<()> {
+async fn run_heartbeat_once(agent_id: &str) -> Result<()> {
     let config = Config::load()?;
-    let runner = HeartbeatRunner::new(&config)?;
+    let runner = HeartbeatRunner::new_with_agent(&config, agent_id)?;
 
-    println!("Running heartbeat...");
+    println!("Running heartbeat (agent: {})...", agent_id);
     let result = runner.run_once().await?;
 
     if result == "HEARTBEAT_OK" {

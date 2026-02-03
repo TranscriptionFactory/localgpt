@@ -21,6 +21,10 @@ pub struct Cli {
     /// Path to config file
     #[arg(short, long, global = true, env = "LOCALGPT_CONFIG")]
     pub config: Option<String>,
+
+    /// Agent ID to use (default: "main", OpenClaw-compatible)
+    #[arg(short, long, global = true, default_value = "main", env = "LOCALGPT_AGENT")]
+    pub agent: String,
 }
 
 #[derive(Subcommand)]
