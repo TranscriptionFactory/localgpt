@@ -119,11 +119,13 @@ fn normalize_model_id(provider: &str, model_id: &str) -> String {
     match provider {
         "anthropic" => {
             match model_id.to_lowercase().as_str() {
-                // OpenClaw format: claude-opus-4-5, claude-sonnet-4-5
-                "claude-opus-4-5" | "opus-4.5" | "opus" => "claude-sonnet-4-5-20250514".to_string(), // Opus 4 not yet available
-                "claude-sonnet-4-5" | "sonnet-4.5" | "sonnet" => "claude-sonnet-4-5-20250514".to_string(),
+                // Claude 4.x models
+                "claude-opus-4-5" | "opus-4.5" | "opus" => "claude-sonnet-4-20250514".to_string(), // Opus 4.5 not yet available, use Sonnet 4
+                "claude-sonnet-4-5" | "claude-sonnet-4" | "sonnet-4.5" | "sonnet-4" | "sonnet" => "claude-sonnet-4-20250514".to_string(),
+                // Claude 3.5 models
                 "claude-3-5-haiku" | "haiku-3.5" | "haiku" => "claude-3-5-haiku-20241022".to_string(),
                 "claude-3-5-sonnet" | "sonnet-3.5" => "claude-3-5-sonnet-20241022".to_string(),
+                // Claude 3 models
                 "claude-3-opus" | "opus-3" => "claude-3-opus-20240229".to_string(),
                 other => other.to_string(),
             }
