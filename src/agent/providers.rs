@@ -119,16 +119,11 @@ fn normalize_model_id(provider: &str, model_id: &str) -> String {
     match provider {
         "anthropic" => {
             match model_id.to_lowercase().as_str() {
-                // Claude 4.5 models (latest)
-                "claude-opus-4-5" | "opus-4.5" | "opus" => "claude-opus-4-5-20251101".to_string(),
-                "claude-sonnet-4-5" | "sonnet-4.5" | "sonnet" => "claude-sonnet-4-5-20250929".to_string(),
-                // Claude 4 models (legacy)
-                "claude-sonnet-4" | "sonnet-4" => "claude-sonnet-4-20250514".to_string(),
-                "claude-opus-4" | "opus-4" => "claude-opus-4-20250514".to_string(),
-                // Claude 3.x models (legacy)
-                "claude-3-5-sonnet" | "sonnet-3.5" => "claude-3-5-sonnet-20241022".to_string(),
-                "claude-3-opus" | "opus-3" => "claude-3-opus-20240229".to_string(),
-                other => other.to_string(),
+                // Claude 4.5 models only
+                "claude-opus-4-5" | "opus" => "claude-opus-4-5-20251101".to_string(),
+                "claude-sonnet-4-5" | "sonnet" => "claude-sonnet-4-5-20250929".to_string(),
+                // Default to Opus 4.5 for any other input
+                _ => "claude-opus-4-5-20251101".to_string(),
             }
         }
         _ => model_id.to_string(),
