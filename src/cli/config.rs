@@ -107,9 +107,50 @@ fn init_config(force: bool) -> Result<()> {
         std::fs::create_dir_all(parent)?;
     }
 
-    let default_config = Config::default();
-    default_config.save()?;
+    // Write template config with comments
+    std::fs::write(&path, DEFAULT_CONFIG_TEMPLATE)?;
 
     println!("Created config file at {}", path.display());
     Ok(())
 }
+
+const DEFAULT_CONFIG_TEMPLATE: &str = r#"# LocalGPT Configuration
+
+[agent]
+# Default model: claude-cli/opus, anthropic/claude-sonnet-4-5, openai/gpt-4o, etc.
+default_model = "claude-cli/opus"
+context_window = 128000
+reserve_tokens = 8000
+
+# Anthropic API (for anthropic/* models)
+# [providers.anthropic]
+# api_key = "${ANTHROPIC_API_KEY}"
+
+# OpenAI API (for openai/* models)
+# [providers.openai]
+# api_key = "${OPENAI_API_KEY}"
+
+# Claude CLI (for claude-cli/* models, requires claude CLI installed)
+[providers.claude_cli]
+command = "claude"
+
+[heartbeat]
+enabled = true
+interval = "30m"
+
+# Only run during these hours (optional)
+# [heartbeat.active_hours]
+# start = "09:00"
+# end = "22:00"
+
+[memory]
+workspace = "~/.localgpt/workspace"
+
+[server]
+enabled = true
+port = 31327
+bind = "127.0.0.1"
+
+[logging]
+level = "info"
+"#;

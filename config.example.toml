@@ -62,10 +62,9 @@ enabled = true
 interval = "30m"
 
 # Only run during these hours (optional)
-# active_hours = { start = "09:00", end = "22:00" }
-
-# Timezone for active hours
-# timezone = "America/Los_Angeles"
+# [heartbeat.active_hours]
+# start = "09:00"
+# end = "22:00"
 
 [memory]
 # Where to store memory files
