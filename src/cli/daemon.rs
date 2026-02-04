@@ -79,34 +79,62 @@ async fn run_daemon_server(config: Config, agent_id: &str) -> Result<()> {
 
     println!("Daemon started successfully");
 
+    run_daemon_services(&config, agent_id).await?;
+
+    println!("\nShutting down...");
+    let pid_file = get_pid_file()?;
+    fs::remove_file(&pid_file).ok();
+
+    Ok(())
+}
+
+/// Run daemon services (server and/or heartbeat)
+async fn run_daemon_services(config: &Config, agent_id: &str) -> Result<()> {
+    // Spawn heartbeat in background if enabled
+    let heartbeat_handle = if config.heartbeat.enabled {
+        let heartbeat_config = config.clone();
+        let heartbeat_agent_id = agent_id.to_string();
+        println!(
+            "  Heartbeat: enabled (interval: {})",
+            config.heartbeat.interval
+        );
+        Some(tokio::spawn(async move {
+            match HeartbeatRunner::new_with_agent(&heartbeat_config, &heartbeat_agent_id) {
+                Ok(runner) => {
+                    if let Err(e) = runner.run().await {
+                        tracing::error!("Heartbeat runner error: {}", e);
+                    }
+                }
+                Err(e) => {
+                    tracing::error!("Failed to create heartbeat runner: {}", e);
+                }
+            }
+        }))
+    } else {
+        None
+    };
+
+    // Run server or wait for shutdown
     if config.server.enabled {
         println!(
             "  Server: http://{}:{}",
             config.server.bind, config.server.port
         );
-        if config.heartbeat.enabled {
-            println!(
-                "  Heartbeat: running separately (use 'localgpt daemon heartbeat' to trigger)"
-            );
-        }
-
-        let server = Server::new(&config)?;
+        let server = Server::new(config)?;
         server.run().await?;
-    } else if config.heartbeat.enabled {
-        println!(
-            "  Heartbeat: enabled (interval: {})",
-            config.heartbeat.interval
-        );
-        let runner = HeartbeatRunner::new(&config)?;
-        runner.run().await?;
+    } else if heartbeat_handle.is_some() {
+        // Server not enabled but heartbeat is - wait for Ctrl+C
+        println!("  Server: disabled");
+        tokio::signal::ctrl_c().await?;
     } else {
         println!("  Neither server nor heartbeat is enabled. Use Ctrl+C to stop.");
         tokio::signal::ctrl_c().await?;
     }
 
-    println!("\nShutting down...");
-    let pid_file = get_pid_file()?;
-    fs::remove_file(&pid_file).ok();
+    // Abort heartbeat task on shutdown
+    if let Some(handle) = heartbeat_handle {
+        handle.abort();
+    }
 
     Ok(())
 }
@@ -187,30 +215,7 @@ async fn start_daemon(foreground: bool, agent_id: &str) -> Result<()> {
 
     println!("Daemon started successfully");
 
-    if config.server.enabled {
-        println!(
-            "  Server: http://{}:{}",
-            config.server.bind, config.server.port
-        );
-        if config.heartbeat.enabled {
-            println!(
-                "  Heartbeat: running separately (use 'localgpt daemon heartbeat' to trigger)"
-            );
-        }
-
-        let server = Server::new(&config)?;
-        server.run().await?;
-    } else if config.heartbeat.enabled {
-        println!(
-            "  Heartbeat: enabled (interval: {})",
-            config.heartbeat.interval
-        );
-        let runner = HeartbeatRunner::new(&config)?;
-        runner.run().await?;
-    } else {
-        println!("  Neither server nor heartbeat is enabled. Use Ctrl+C to stop.");
-        tokio::signal::ctrl_c().await?;
-    }
+    run_daemon_services(&config, agent_id).await?;
 
     println!("\nShutting down...");
     fs::remove_file(&pid_file).ok();
