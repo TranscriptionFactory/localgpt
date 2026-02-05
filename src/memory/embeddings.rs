@@ -168,7 +168,23 @@ pub struct FastEmbedProvider {
 
 impl FastEmbedProvider {
     pub fn new(model_name: Option<&str>) -> Result<Self> {
+        Self::new_with_cache_dir(model_name, None)
+    }
+
+    pub fn new_with_cache_dir(model_name: Option<&str>, cache_dir: Option<&str>) -> Result<Self> {
         use fastembed::{EmbeddingModel, InitOptions, TextEmbedding};
+
+        // Set cache directory via environment variable if provided
+        // This must be done before TextEmbedding::try_new
+        if let Some(dir) = cache_dir {
+            let expanded = shellexpand::tilde(dir).to_string();
+            let path = std::path::Path::new(&expanded);
+            if let Err(e) = std::fs::create_dir_all(path) {
+                debug!("Failed to create cache directory {}: {}", expanded, e);
+            }
+            std::env::set_var("FASTEMBED_CACHE_DIR", &expanded);
+            debug!("Set FASTEMBED_CACHE_DIR to {}", expanded);
+        }
 
         // Supported models with disk sizes:
         // - all-MiniLM-L6-v2:      384 dims, ~80 MB  (default, English, fastest)

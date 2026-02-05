@@ -159,6 +159,12 @@ pub struct MemoryConfig {
     #[serde(default = "default_embedding_model")]
     pub embedding_model: String,
 
+    /// Cache directory for local embedding models (optional)
+    /// Default: ~/.cache/localgpt/models
+    /// Can also be set via FASTEMBED_CACHE_DIR environment variable
+    #[serde(default = "default_embedding_cache_dir")]
+    pub embedding_cache_dir: String,
+
     #[serde(default = "default_chunk_size")]
     pub chunk_size: usize,
 
@@ -269,6 +275,9 @@ fn default_embedding_provider() -> String {
 fn default_embedding_model() -> String {
     "all-MiniLM-L6-v2".to_string() // Local model via fastembed (no API key needed)
 }
+fn default_embedding_cache_dir() -> String {
+    "~/.cache/localgpt/models".to_string()
+}
 fn default_chunk_size() -> usize {
     400
 }
@@ -341,6 +350,7 @@ impl Default for MemoryConfig {
             workspace: default_workspace(),
             embedding_provider: default_embedding_provider(),
             embedding_model: default_embedding_model(),
+            embedding_cache_dir: default_embedding_cache_dir(),
             chunk_size: default_chunk_size(),
             chunk_overlap: default_chunk_overlap(),
             paths: default_index_paths(),

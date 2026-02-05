@@ -103,7 +103,12 @@ impl MemoryManager {
                 } else {
                     Some(memory_config.embedding_model.as_str())
                 };
-                match FastEmbedProvider::new(model_name) {
+                let cache_dir = if memory_config.embedding_cache_dir.is_empty() {
+                    None
+                } else {
+                    Some(memory_config.embedding_cache_dir.as_str())
+                };
+                match FastEmbedProvider::new_with_cache_dir(model_name, cache_dir) {
                     Ok(provider) => {
                         info!("Using local embedding provider: {}", provider.model());
                         Some(Arc::new(provider))

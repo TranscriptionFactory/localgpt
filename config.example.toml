@@ -93,6 +93,12 @@ embedding_provider = "local"
 # For OpenAI provider: text-embedding-3-small, text-embedding-3-large
 embedding_model = "all-MiniLM-L6-v2"
 
+# Cache directory for local embedding models (ONNX format)
+# Models are downloaded from HuggingFace on first use
+# Default: ~/.cache/localgpt/models
+# Can also be set via FASTEMBED_CACHE_DIR environment variable
+# embedding_cache_dir = "~/.cache/localgpt/models"
+
 # Chunk size for indexing (tokens)
 chunk_size = 400
 
