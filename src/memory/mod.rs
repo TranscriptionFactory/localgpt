@@ -160,7 +160,7 @@ impl MemoryManager {
             index,
             config: memory_config.clone(),
             embedding_provider,
-is_brand_new,
+            is_brand_new,
         })
     }
 
