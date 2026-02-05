@@ -124,8 +124,10 @@ pub fn daemonize_and_run(agent_id: &str) -> Result<()> {
 /// Run the daemon server (called after fork in background mode)
 async fn run_daemon_server(config: Config, agent_id: &str) -> Result<()> {
     // Initialize logging in the daemon process
+    // Disable ANSI colors since we're writing to a file
     tracing_subscriber::fmt()
         .with_env_filter(tracing_subscriber::EnvFilter::new("info"))
+        .with_ansi(false)
         .init();
 
     let memory = MemoryManager::new_with_full_config(&config.memory, Some(&config), agent_id)?;
