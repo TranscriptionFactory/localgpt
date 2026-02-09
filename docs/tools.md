@@ -207,6 +207,17 @@ Fetch content from a URL.
 - Respects timeouts
 - Returns error for non-2xx responses
 
+## Provider Tool Support
+
+All LLM providers in LocalGPT support tool calling:
+
+| Provider | Tool Calling |
+|----------|-------------|
+| Claude CLI | Native support |
+| Anthropic API | Native support |
+| OpenAI | Native support |
+| Ollama | Supported (v0.1.2+) — requires Ollama models with tool calling capability |
+
 ## Tool Execution Flow
 
 When the AI wants to use a tool:

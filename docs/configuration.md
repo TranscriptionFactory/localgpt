@@ -222,7 +222,7 @@ default_model = "llama3"  # or mistral, codellama, etc.
 endpoint = "http://localhost:11434"
 ```
 
-For fully local operation, only configure Ollama (no API keys needed).
+For fully local operation, only configure Ollama (no API keys needed). Tool calling is supported for Ollama models that have tool calling capability.
 
 ## Validate Configuration
 

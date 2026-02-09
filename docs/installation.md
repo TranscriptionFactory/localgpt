@@ -105,6 +105,18 @@ localgpt --help
 localgpt ask "What is 2+2?"
 ```
 
+## Linux Desktop Build
+
+On Linux, the desktop GUI requires X11 or Wayland development libraries. If building with the desktop feature:
+
+```bash
+# Debian/Ubuntu
+sudo apt install libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev libxkbcommon-dev
+
+# Or build headless to skip these requirements
+cargo build --release --no-default-features
+```
+
 ## Using with Ollama (Local Models)
 
 If you prefer fully local operation with Ollama:
@@ -120,3 +132,5 @@ default_model = "llama3"
 [providers.ollama]
 endpoint = "http://localhost:11434"
 ```
+
+Ollama models with tool calling capability (e.g., `llama3`, `mistral`) support all 7 built-in tools.

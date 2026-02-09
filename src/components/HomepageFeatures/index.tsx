@@ -22,9 +22,10 @@ const FeatureList: FeatureItem[] = [
     title: 'Hybrid Memory Search',
     description: (
       <>
-        Persistent markdown-based memory with hybrid search — SQLite FTS5 for
-        keyword matching and local vector embeddings (fastembed) for semantic
-        search. Your AI remembers and finds context across sessions.
+        Persistent markdown-based memory with hybrid search — SQLite FTS5 with
+        AND matching and rank-based scoring, plus local vector embeddings
+        (fastembed) for semantic search. Your AI remembers and finds context
+        across sessions.
       </>
     ),
   },
@@ -54,8 +55,8 @@ const FeatureList: FeatureItem[] = [
     description: (
       <>
         Works with Claude CLI, Anthropic API, OpenAI, and local Ollama
-        models. Switch providers seamlessly while keeping your memory and
-        conversation history intact.
+        models — all with full tool calling support. Switch providers
+        seamlessly while keeping your memory and conversation history intact.
       </>
     ),
   },

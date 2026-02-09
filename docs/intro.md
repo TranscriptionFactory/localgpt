@@ -10,10 +10,10 @@ LocalGPT is a **local AI assistant with persistent memory, semantic search, and 
 ## Key Features
 
 - **Local & Private** - Single ~27MB Rust binary. All data stays on your machine. No cloud storage, no telemetry.
-- **Hybrid Memory Search** - Markdown-based knowledge store with SQLite FTS5 full-text search and local vector embeddings (fastembed) for semantic search
+- **Hybrid Memory Search** - Markdown-based knowledge store with SQLite FTS5 full-text search (with AND matching and rank-based scoring) and local vector embeddings (fastembed) for semantic search
 - **Desktop App** - Optional native desktop GUI built with egui — chat, sessions, memory browser, and status dashboard. Disable with `--no-default-features` for headless/Docker deployments.
 - **Embedded Web UI** - Browser-based chat interface served directly from the binary
-- **Multi-Provider Support** - Works with Claude CLI, Anthropic API, OpenAI, and local Ollama models
+- **Multi-Provider Support** - Works with Claude CLI, Anthropic API, OpenAI, and local Ollama models — all with full tool calling support
 - **Autonomous Heartbeat** - Daemon mode with scheduled background tasks that run automatically
 - **Skills System** - Extensible skills for specialized tasks
 - **Security** - Prompt injection defenses, tool approval mode, content sanitization, and workspace locking
@@ -51,7 +51,7 @@ LocalGPT automatically detects the provider based on model name prefix:
 | `anthropic/*` | Anthropic API | anthropic/claude-opus-4-5, anthropic/claude-sonnet-4-5 |
 | `openai/*` | OpenAI | openai/gpt-4o, openai/gpt-4o-mini |
 | Aliases | Any | opus, sonnet, gpt, gpt-mini |
-| Other | Ollama | llama3, mistral, codellama |
+| Other | Ollama (with tool calling) | llama3, mistral, codellama |
 
 ## Next Steps
 
