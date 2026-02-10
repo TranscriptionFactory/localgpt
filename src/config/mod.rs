@@ -6,8 +6,11 @@ pub use schema::*;
 
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::fs;
 use std::path::PathBuf;
+
+use crate::agent::tool_filters::ToolFilter;
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct Config {
@@ -81,6 +84,29 @@ pub struct ToolsConfig {
     /// Wrap tool outputs and memory content with XML-style delimiters
     #[serde(default = "default_true")]
     pub use_content_delimiters: bool,
+
+    /// Per-tool input filters. Keys are tool names: "bash", "read_file",
+    /// "write_file", "edit_file", "web_fetch".
+    /// Each filter defines deny/allow patterns applied to the tool's primary
+    /// input field (command, path, or url).
+    #[serde(default)]
+    pub filters: HashMap<String, ToolFilter>,
+
+    /// Per-tool output size limits in bytes. Default: {"bash": 102400}
+    #[serde(default = "default_max_output_bytes")]
+    pub max_output_bytes: HashMap<String, usize>,
+
+    /// Maximum tool calls per turn before rate limiting kicks in
+    #[serde(default = "default_max_tool_calls_per_turn")]
+    pub max_tool_calls_per_turn: usize,
+
+    /// Maximum consecutive tool errors before aborting
+    #[serde(default = "default_max_consecutive_errors")]
+    pub max_consecutive_errors: usize,
+
+    /// Patterns for tools requiring user confirmation before execution
+    #[serde(default)]
+    pub require_confirmation_patterns: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -92,12 +118,24 @@ pub struct SecurityConfig {
     /// warns and falls back to hardcoded-only security.
     #[serde(default)]
     pub strict_policy: bool,
+
+    /// Allowed directories for file tools. Empty = unrestricted.
+    /// Paths are canonicalized at startup; symlinks resolved.
+    #[serde(default)]
+    pub allowed_directories: Vec<String>,
+
+    /// Env var name patterns to filter from bash subprocess environment.
+    /// Uses simple glob: `*_KEY` → ends_with, `SECRET_*` → starts_with.
+    #[serde(default = "default_env_deny_patterns")]
+    pub env_deny_patterns: Vec<String>,
 }
 
 impl Default for SecurityConfig {
     fn default() -> Self {
         Self {
             strict_policy: false,
+            allowed_directories: Vec::new(),
+            env_deny_patterns: default_env_deny_patterns(),
         }
     }
 }
@@ -229,6 +267,10 @@ pub struct ServerConfig {
 
     #[serde(default = "default_bind")]
     pub bind: String,
+
+    /// Require Bearer token auth on /api/* routes (default: true)
+    #[serde(default = "default_require_auth")]
+    pub require_auth: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -250,6 +292,10 @@ pub struct TelegramConfig {
     pub enabled: bool,
 
     pub api_token: String,
+
+    /// Session TTL for paired users (e.g. "24h", "7d"). None = no expiry.
+    #[serde(default)]
+    pub session_ttl: Option<String>,
 }
 
 // Default value functions
@@ -274,6 +320,34 @@ fn default_web_fetch_max_bytes() -> usize {
 }
 fn default_tool_output_max_chars() -> usize {
     50000 // 50k characters max for tool output by default
+}
+
+fn default_env_deny_patterns() -> Vec<String> {
+    vec![
+        "*_KEY".to_string(),
+        "*_SECRET".to_string(),
+        "*_TOKEN".to_string(),
+        "*_PASSWORD".to_string(),
+        "*_CREDENTIALS".to_string(),
+    ]
+}
+
+fn default_max_output_bytes() -> HashMap<String, usize> {
+    let mut m = HashMap::new();
+    m.insert("bash".to_string(), 102400); // 100KB
+    m
+}
+
+fn default_max_tool_calls_per_turn() -> usize {
+    50
+}
+
+fn default_max_consecutive_errors() -> usize {
+    5
+}
+
+fn default_require_auth() -> bool {
+    true
 }
 fn default_openai_base_url() -> String {
     "https://api.openai.com/v1".to_string()
@@ -362,6 +436,11 @@ impl Default for ToolsConfig {
             tool_output_max_chars: default_tool_output_max_chars(),
             log_injection_warnings: default_true(),
             use_content_delimiters: default_true(),
+            filters: HashMap::new(),
+            max_output_bytes: default_max_output_bytes(),
+            max_tool_calls_per_turn: default_max_tool_calls_per_turn(),
+            max_consecutive_errors: default_max_consecutive_errors(),
+            require_confirmation_patterns: Vec::new(),
         }
     }
 }
@@ -399,6 +478,7 @@ impl Default for ServerConfig {
             enabled: default_true(),
             port: default_port(),
             bind: default_bind(),
+            require_auth: default_require_auth(),
         }
     }
 }

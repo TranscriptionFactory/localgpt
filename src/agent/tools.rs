@@ -1,14 +1,30 @@
 use anyhow::Result;
 use async_trait::async_trait;
 use serde_json::{json, Value};
+use std::collections::HashMap;
 use std::fs;
 use std::path::PathBuf;
 use std::sync::Arc;
 use tracing::debug;
 
 use super::providers::ToolSchema;
+use super::hardcoded_filters;
+use super::tool_filters::CompiledToolFilter;
+use crate::agent::tool_filters::ToolFilter;
 use crate::config::Config;
 use crate::memory::MemoryManager;
+
+// --- Helper: look up and compile a filter for a given tool name ---
+
+fn compile_filter_for(
+    filters: &HashMap<String, ToolFilter>,
+    tool_name: &str,
+) -> anyhow::Result<CompiledToolFilter> {
+    match filters.get(tool_name) {
+        Some(filter) => CompiledToolFilter::compile(filter),
+        None => Ok(CompiledToolFilter::permissive()),
+    }
+}
 
 #[derive(Debug, Clone)]
 pub struct ToolResult {
@@ -32,6 +48,29 @@ pub fn create_default_tools(
         .parent()
         .unwrap_or_else(|| std::path::Path::new("~/.localgpt"))
         .to_path_buf();
+    let filters = &config.tools.filters;
+
+    // Compile user filters then merge hardcoded defaults
+    let bash_filter = compile_filter_for(filters, "bash")?.merge_hardcoded(
+        hardcoded_filters::BASH_DENY_SUBSTRINGS,
+        hardcoded_filters::BASH_DENY_PATTERNS,
+    )?;
+
+    let web_fetch_filter = compile_filter_for(filters, "web_fetch")?.merge_hardcoded(
+        hardcoded_filters::WEB_FETCH_DENY_SUBSTRINGS,
+        hardcoded_filters::WEB_FETCH_DENY_PATTERNS,
+    )?;
+
+    // Pre-canonicalize allowed directories for path scoping
+    let allowed_directories: Vec<PathBuf> = config
+        .security
+        .allowed_directories
+        .iter()
+        .filter_map(|d| {
+            let expanded = shellexpand::tilde(d).to_string();
+            std::fs::canonicalize(&expanded).ok()
+        })
+        .collect();
 
     // Use indexed memory search if MemoryManager is provided, otherwise fallback to grep-based
     let memory_search_tool: Box<dyn Tool> = if let Some(ref mem) = memory {
@@ -44,28 +83,125 @@ pub fn create_default_tools(
         Box::new(BashTool::new(
             config.tools.bash_timeout_ms,
             state_dir.clone(),
+            bash_filter,
+            config.security.strict_policy,
+            workspace.clone(),
+            config.security.env_deny_patterns.clone(),
         )),
-        Box::new(ReadFileTool::new()),
-        Box::new(WriteFileTool::new(state_dir.clone())),
-        Box::new(EditFileTool::new(state_dir)),
+        Box::new(ReadFileTool::new(
+            compile_filter_for(filters, "read_file")?,
+            allowed_directories.clone(),
+        )),
+        Box::new(WriteFileTool::new(
+            state_dir.clone(),
+            compile_filter_for(filters, "write_file")?,
+            allowed_directories.clone(),
+        )),
+        Box::new(EditFileTool::new(
+            state_dir,
+            compile_filter_for(filters, "edit_file")?,
+            allowed_directories,
+        )),
         memory_search_tool,
         Box::new(MemoryGetTool::new(workspace)),
-        Box::new(WebFetchTool::new(config.tools.web_fetch_max_bytes)),
+        Box::new(WebFetchTool::new(
+            config.tools.web_fetch_max_bytes,
+            web_fetch_filter,
+        )),
     ])
 }
 
-// Bash Tool
+/// Resolve a path to its real (canonical) form.
+/// Expands tilde, then canonicalizes. For new files (that don't exist yet),
+/// canonicalizes the parent directory and appends the filename.
+fn resolve_real_path(path: &str) -> Result<PathBuf> {
+    let expanded = shellexpand::tilde(path).to_string();
+    let p = PathBuf::from(&expanded);
+
+    // Try canonicalize directly (works for existing paths)
+    if let Ok(canonical) = fs::canonicalize(&p) {
+        return Ok(canonical);
+    }
+
+    // For new files: canonicalize parent, append filename
+    if let (Some(parent), Some(filename)) = (p.parent(), p.file_name()) {
+        if let Ok(canonical_parent) = fs::canonicalize(parent) {
+            return Ok(canonical_parent.join(filename));
+        }
+    }
+
+    // Fallback: return the expanded path as-is
+    Ok(p)
+}
+
+/// Check whether a resolved path is within one of the allowed directories.
+/// If `allowed_dirs` is empty, all paths are allowed (unrestricted mode).
+fn check_path_allowed(real_path: &std::path::Path, allowed_dirs: &[PathBuf]) -> Result<()> {
+    if allowed_dirs.is_empty() {
+        return Ok(());
+    }
+
+    for dir in allowed_dirs {
+        if real_path.starts_with(dir) {
+            return Ok(());
+        }
+    }
+
+    Err(anyhow::anyhow!(
+        "Path denied: {} is outside allowed directories",
+        real_path.display()
+    ))
+}
+
 pub struct BashTool {
     default_timeout_ms: u64,
     state_dir: PathBuf,
+    filter: CompiledToolFilter,
+    strict_policy: bool,
+    workspace_path: PathBuf,
+    env_deny_patterns: Vec<String>,
 }
 
 impl BashTool {
-    pub fn new(default_timeout_ms: u64, state_dir: PathBuf) -> Self {
+    pub fn new(
+        default_timeout_ms: u64,
+        state_dir: PathBuf,
+        filter: CompiledToolFilter,
+        strict_policy: bool,
+        workspace_path: PathBuf,
+        env_deny_patterns: Vec<String>,
+    ) -> Self {
         Self {
             default_timeout_ms,
             state_dir,
+            filter,
+            strict_policy,
+            workspace_path,
+            env_deny_patterns,
         }
+    }
+
+    /// Check if an env var name matches any deny pattern.
+    /// Patterns use simple glob: `*_KEY` means ends_with("_KEY"),
+    /// `SECRET_*` means starts_with("SECRET_"), `*SECRET*` means contains("SECRET").
+    fn env_var_denied(&self, name: &str) -> bool {
+        let name_upper = name.to_uppercase();
+        self.env_deny_patterns.iter().any(|pattern| {
+            let p = pattern.to_uppercase();
+            if let Some(inner) = p.strip_prefix('*').and_then(|s| s.strip_suffix('*')) {
+                // *FOO* → contains
+                name_upper.contains(inner)
+            } else if let Some(suffix) = p.strip_prefix('*') {
+                // *_KEY → ends_with
+                name_upper.ends_with(suffix)
+            } else if let Some(prefix) = p.strip_suffix('*') {
+                // SECRET_* → starts_with
+                name_upper.starts_with(prefix)
+            } else {
+                // Exact match
+                name_upper == p
+            }
+        })
     }
 }
 
@@ -102,6 +238,9 @@ impl Tool for BashTool {
             .as_str()
             .ok_or_else(|| anyhow::anyhow!("Missing command"))?;
 
+        // Filter on the command string (hardcoded + user-configured)
+        self.filter.check(command, "bash", "command")?;
+
         let timeout_ms = args["timeout_ms"]
             .as_u64()
             .unwrap_or(self.default_timeout_ms);
@@ -121,6 +260,14 @@ impl Tool for BashTool {
                 "tool:bash",
                 Some(&detail),
             );
+
+            if self.strict_policy {
+                anyhow::bail!(
+                    "Blocked: bash command references protected files: {:?}",
+                    suspicious
+                );
+            }
+
             tracing::warn!("Bash command may modify protected files: {:?}", suspicious);
         }
 
@@ -129,17 +276,25 @@ impl Tool for BashTool {
             timeout_ms, command
         );
 
+        // Build environment with sensitive vars filtered out
+        let mut cmd = tokio::process::Command::new("bash");
+        cmd.arg("-c").arg(command);
+
+        if !self.env_deny_patterns.is_empty() {
+            // Clear inherited env and re-add only non-denied vars
+            cmd.env_clear();
+            for (key, value) in std::env::vars() {
+                if !self.env_var_denied(&key) {
+                    cmd.env(&key, &value);
+                }
+            }
+        }
+
         // Run command with timeout
         let timeout_duration = std::time::Duration::from_millis(timeout_ms);
-        let output = tokio::time::timeout(
-            timeout_duration,
-            tokio::process::Command::new("bash")
-                .arg("-c")
-                .arg(command)
-                .output(),
-        )
-        .await
-        .map_err(|_| anyhow::anyhow!("Command timed out after {}ms", timeout_ms))??;
+        let output = tokio::time::timeout(timeout_duration, cmd.output())
+            .await
+            .map_err(|_| anyhow::anyhow!("Command timed out after {}ms", timeout_ms))??;
 
         let stdout = String::from_utf8_lossy(&output.stdout);
         let stderr = String::from_utf8_lossy(&output.stderr);
@@ -164,16 +319,55 @@ impl Tool for BashTool {
             );
         }
 
+        // Post-exec integrity: re-verify HMAC if command may have touched workspace
+        let workspace_str = self.workspace_path.to_string_lossy();
+        let references_workspace = command.contains(workspace_str.as_ref())
+            || command.contains("LocalGPT.md")
+            || command.contains("localgpt.md");
+
+        if references_workspace {
+            let state_dir = self.workspace_path
+                .parent()
+                .unwrap_or_else(|| std::path::Path::new("~/.localgpt"));
+
+            match crate::security::load_and_verify_policy(&self.workspace_path, state_dir) {
+                crate::security::PolicyVerification::TamperDetected => {
+                    let _ = crate::security::append_audit_entry(
+                        state_dir,
+                        crate::security::AuditAction::TamperDetected,
+                        "",
+                        "post_exec_check",
+                    );
+                    if self.strict_policy {
+                        return Err(anyhow::anyhow!(
+                            "Security policy tamper detected after bash execution. \
+                             The command may have modified LocalGPT.md."
+                        ));
+                    }
+                    result.push_str(
+                        "\n\n[WARNING: Security policy tamper detected after execution]"
+                    );
+                }
+                _ => {}
+            }
+        }
+
         Ok(result)
     }
 }
 
 // Read File Tool
-pub struct ReadFileTool;
+pub struct ReadFileTool {
+    filter: CompiledToolFilter,
+    allowed_directories: Vec<PathBuf>,
+}
 
 impl ReadFileTool {
-    pub fn new() -> Self {
-        Self
+    pub fn new(filter: CompiledToolFilter, allowed_directories: Vec<PathBuf>) -> Self {
+        Self {
+            filter,
+            allowed_directories,
+        }
     }
 }
 
@@ -214,11 +408,19 @@ impl Tool for ReadFileTool {
             .as_str()
             .ok_or_else(|| anyhow::anyhow!("Missing path"))?;
 
-        let path = shellexpand::tilde(path).to_string();
+        // Resolve symlinks before any checks
+        let real_path = resolve_real_path(path)?;
+        let path_str = real_path.to_string_lossy().to_string();
 
-        debug!("Reading file: {}", path);
+        // Check path scoping
+        check_path_allowed(&real_path, &self.allowed_directories)?;
 
-        let content = fs::read_to_string(&path)?;
+        // Filter on the resolved path
+        self.filter.check(&path_str, "read_file", "path")?;
+
+        debug!("Reading file: {}", path_str);
+
+        let content = fs::read_to_string(&real_path)?;
 
         // Handle offset and limit
         let offset = args["offset"].as_u64().unwrap_or(0) as usize;
@@ -245,11 +447,21 @@ impl Tool for ReadFileTool {
 // Write File Tool
 pub struct WriteFileTool {
     state_dir: PathBuf,
+    filter: CompiledToolFilter,
+    allowed_directories: Vec<PathBuf>,
 }
 
 impl WriteFileTool {
-    pub fn new(state_dir: PathBuf) -> Self {
-        Self { state_dir }
+    pub fn new(
+        state_dir: PathBuf,
+        filter: CompiledToolFilter,
+        allowed_directories: Vec<PathBuf>,
+    ) -> Self {
+        Self {
+            state_dir,
+            filter,
+            allowed_directories,
+        }
     }
 }
 
@@ -289,13 +501,20 @@ impl Tool for WriteFileTool {
             .as_str()
             .ok_or_else(|| anyhow::anyhow!("Missing content"))?;
 
-        let path = shellexpand::tilde(path).to_string();
-        let path = PathBuf::from(&path);
+        // Resolve symlinks before any checks
+        let real_path = resolve_real_path(path)?;
+        let path_str = real_path.to_string_lossy().to_string();
+
+        // Check path scoping
+        check_path_allowed(&real_path, &self.allowed_directories)?;
+
+        // Filter on the resolved path
+        self.filter.check(&path_str, "write_file", "path")?;
 
         // Check protected files
-        if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
+        if let Some(name) = real_path.file_name().and_then(|n| n.to_str()) {
             if crate::security::is_workspace_file_protected(name) {
-                let detail = format!("Agent attempted write to {}", path.display());
+                let detail = format!("Agent attempted write to {}", real_path.display());
                 let _ = crate::security::append_audit_entry_with_detail(
                     &self.state_dir,
                     crate::security::AuditAction::WriteBlocked,
@@ -306,24 +525,24 @@ impl Tool for WriteFileTool {
                 anyhow::bail!(
                     "Cannot write to protected file: {}. This file is managed by the security system. \
                      Use `localgpt security sign` to update the security policy.",
-                    path.display()
+                    real_path.display()
                 );
             }
         }
 
-        debug!("Writing file: {}", path.display());
+        debug!("Writing file: {}", real_path.display());
 
         // Create parent directories if needed
-        if let Some(parent) = path.parent() {
+        if let Some(parent) = real_path.parent() {
             fs::create_dir_all(parent)?;
         }
 
-        fs::write(&path, content)?;
+        fs::write(&real_path, content)?;
 
         Ok(format!(
             "Successfully wrote {} bytes to {}",
             content.len(),
-            path.display()
+            real_path.display()
         ))
     }
 }
@@ -331,11 +550,21 @@ impl Tool for WriteFileTool {
 // Edit File Tool
 pub struct EditFileTool {
     state_dir: PathBuf,
+    filter: CompiledToolFilter,
+    allowed_directories: Vec<PathBuf>,
 }
 
 impl EditFileTool {
-    pub fn new(state_dir: PathBuf) -> Self {
-        Self { state_dir }
+    pub fn new(
+        state_dir: PathBuf,
+        filter: CompiledToolFilter,
+        allowed_directories: Vec<PathBuf>,
+    ) -> Self {
+        Self {
+            state_dir,
+            filter,
+            allowed_directories,
+        }
     }
 }
 
@@ -387,15 +616,20 @@ impl Tool for EditFileTool {
             .ok_or_else(|| anyhow::anyhow!("Missing new_string"))?;
         let replace_all = args["replace_all"].as_bool().unwrap_or(false);
 
-        let path = shellexpand::tilde(path).to_string();
+        // Resolve symlinks before any checks
+        let real_path = resolve_real_path(path)?;
+        let path_str = real_path.to_string_lossy().to_string();
+
+        // Check path scoping
+        check_path_allowed(&real_path, &self.allowed_directories)?;
+
+        // Filter on the resolved path
+        self.filter.check(&path_str, "edit_file", "path")?;
 
         // Check protected files
-        if let Some(name) = std::path::Path::new(&path)
-            .file_name()
-            .and_then(|n| n.to_str())
-        {
+        if let Some(name) = real_path.file_name().and_then(|n| n.to_str()) {
             if crate::security::is_workspace_file_protected(name) {
-                let detail = format!("Agent attempted edit to {}", path);
+                let detail = format!("Agent attempted edit to {}", real_path.display());
                 let _ = crate::security::append_audit_entry_with_detail(
                     &self.state_dir,
                     crate::security::AuditAction::WriteBlocked,
@@ -405,14 +639,14 @@ impl Tool for EditFileTool {
                 );
                 anyhow::bail!(
                     "Cannot edit protected file: {}. This file is managed by the security system.",
-                    path
+                    real_path.display()
                 );
             }
         }
 
-        debug!("Editing file: {}", path);
+        debug!("Editing file: {}", real_path.display());
 
-        let content = fs::read_to_string(&path)?;
+        let content = fs::read_to_string(&real_path)?;
 
         let (new_content, count) = if replace_all {
             let count = content.matches(old_string).count();
@@ -423,9 +657,9 @@ impl Tool for EditFileTool {
             return Err(anyhow::anyhow!("old_string not found in file"));
         };
 
-        fs::write(&path, &new_content)?;
+        fs::write(&real_path, &new_content)?;
 
-        Ok(format!("Replaced {} occurrence(s) in {}", count, path))
+        Ok(format!("Replaced {} occurrence(s) in {}", count, path_str))
     }
 }
 
@@ -734,13 +968,15 @@ impl Tool for MemoryGetTool {
 pub struct WebFetchTool {
     client: reqwest::Client,
     max_bytes: usize,
+    filter: CompiledToolFilter,
 }
 
 impl WebFetchTool {
-    pub fn new(max_bytes: usize) -> Self {
+    pub fn new(max_bytes: usize, filter: CompiledToolFilter) -> Self {
         Self {
             client: reqwest::Client::new(),
             max_bytes,
+            filter,
         }
     }
 }
@@ -773,6 +1009,9 @@ impl Tool for WebFetchTool {
         let url = args["url"]
             .as_str()
             .ok_or_else(|| anyhow::anyhow!("Missing url"))?;
+
+        // Filter on the URL
+        self.filter.check(url, "web_fetch", "url")?;
 
         debug!("Fetching URL: {}", url);
 

@@ -153,7 +153,7 @@ async fn handle_message(bot: Bot, msg: Message, state: Arc<BotState>) -> Respons
 
     // Check pairing
     {
-        let paired = state.paired_user.lock().await;
+        let mut paired = state.paired_user.lock().await;
         if let Some(ref pu) = *paired {
             if pu.user_id != user_id {
                 bot.send_message(
@@ -162,6 +162,37 @@ async fn handle_message(bot: Bot, msg: Message, state: Arc<BotState>) -> Respons
                 )
                 .await?;
                 return Ok(());
+            }
+
+            // Check session TTL if configured
+            let session_ttl = state.config.telegram.as_ref().and_then(|t| t.session_ttl.as_deref());
+            if let Some(ttl_str) = session_ttl {
+                if let Some(ttl_secs) = parse_duration_secs(ttl_str) {
+                    if let Ok(paired_at) =
+                        chrono::DateTime::parse_from_rfc3339(&pu.paired_at)
+                    {
+                        let now = chrono::Utc::now();
+                        let elapsed = now
+                            .signed_duration_since(paired_at.with_timezone(&chrono::Utc))
+                            .num_seconds();
+                        if elapsed > ttl_secs as i64 {
+                            tracing::info!(
+                                "Telegram session expired (TTL: {}, elapsed: {}s)",
+                                ttl_str,
+                                elapsed
+                            );
+                            *paired = None;
+                            let _ = std::fs::remove_file(pairing_file_path().unwrap_or_default());
+                            bot.send_message(
+                                chat_id,
+                                "Session expired. Please re-pair by sending any message.",
+                            )
+                            .await?;
+                            drop(paired);
+                            return handle_pairing(bot, msg, &state, user_id, &text).await;
+                        }
+                    }
+                }
             }
         } else {
             // Not paired yet - handle pairing flow
@@ -177,6 +208,25 @@ async fn handle_message(bot: Bot, msg: Message, state: Arc<BotState>) -> Respons
 
     // Regular chat message
     handle_chat(&bot, chat_id, &state, &text).await
+}
+
+/// Parse a human-readable duration string to seconds.
+/// Supports: "30m", "1h", "24h", "7d", "1w"
+fn parse_duration_secs(s: &str) -> Option<u64> {
+    let s = s.trim();
+    if s.is_empty() {
+        return None;
+    }
+    let (num_str, unit) = s.split_at(s.len().saturating_sub(1));
+    let num: u64 = num_str.parse().ok()?;
+    match unit {
+        "s" => Some(num),
+        "m" => Some(num * 60),
+        "h" => Some(num * 3600),
+        "d" => Some(num * 86400),
+        "w" => Some(num * 604800),
+        _ => None,
+    }
 }
 
 async fn handle_pairing(

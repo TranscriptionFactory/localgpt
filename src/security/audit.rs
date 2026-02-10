@@ -78,6 +78,14 @@ pub enum AuditAction {
     WriteBlocked,
     /// Previous audit entry corrupted, new chain segment started.
     ChainRecovery,
+    /// Tool call or error rate limit exceeded.
+    RateLimitExceeded,
+    /// File path denied by allowed_directories scoping.
+    PathDenied,
+    /// Secret pattern detected and redacted from output.
+    SecretRedacted,
+    /// Session aborted due to fatal security violation.
+    SessionAborted,
 }
 
 /// Append a new entry to the audit log.

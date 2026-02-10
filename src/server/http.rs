@@ -30,11 +30,19 @@ use tokio::sync::Mutex;
 use tower_http::cors::{Any, CorsLayer};
 use tracing::{debug, info};
 
+use axum::middleware;
+
 use crate::agent::{extract_tool_detail, Agent, AgentConfig, StreamEvent};
 use crate::concurrency::{TurnGate, WorkspaceLock};
 use crate::config::Config;
 use crate::heartbeat::{get_last_heartbeat_event, HeartbeatStatus};
 use crate::memory::MemoryManager;
+
+/// Auth state passed to the auth middleware.
+pub struct AuthState {
+    pub require_auth: bool,
+    pub api_token: String,
+}
 
 /// Embedded UI assets
 #[derive(RustEmbed)]
@@ -96,6 +104,38 @@ impl Server {
             MemoryManager::new_with_full_config(&self.config.memory, Some(&self.config), "main")?;
 
         let workspace_lock = WorkspaceLock::new()?;
+
+        // Set up API token authentication
+        let state_dir = self
+            .config
+            .workspace_path()
+            .parent()
+            .unwrap_or_else(|| std::path::Path::new("~/.localgpt"))
+            .to_path_buf();
+
+        let api_token = if self.config.server.require_auth {
+            match super::auth::ensure_api_token(&state_dir) {
+                Ok(token) => {
+                    info!(
+                        "API auth enabled. Token file: {}",
+                        super::auth::api_token_path(&state_dir).display()
+                    );
+                    token
+                }
+                Err(e) => {
+                    tracing::warn!("Failed to set up API token: {}. Auth disabled.", e);
+                    String::new()
+                }
+            }
+        } else {
+            info!("API auth disabled (server.require_auth = false)");
+            String::new()
+        };
+
+        let auth_state = Arc::new(AuthState {
+            require_auth: self.config.server.require_auth && !api_token.is_empty(),
+            api_token,
+        });
 
         let state = Arc::new(AppState {
             config: self.config.clone(),
@@ -164,6 +204,10 @@ impl Server {
             .route("/api/saved-sessions", get(list_saved_sessions))
             .route("/api/saved-sessions/{session_id}", get(get_saved_session))
             .route("/api/logs/daemon", get(get_daemon_logs))
+            .layer(middleware::from_fn_with_state(
+                auth_state,
+                super::auth::auth_middleware,
+            ))
             .layer(cors)
             .with_state(state);
 

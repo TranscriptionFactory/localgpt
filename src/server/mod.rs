@@ -1,3 +1,4 @@
+pub mod auth;
 mod http;
 pub mod telegram;
 mod websocket;

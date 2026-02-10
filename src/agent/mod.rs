@@ -1,9 +1,12 @@
+mod hardcoded_filters;
 mod providers;
 mod sanitize;
+mod secret_scanner;
 mod session;
 mod session_store;
 mod skills;
 mod system_prompt;
+pub mod tool_filters;
 mod tools;
 
 pub use providers::{
@@ -33,6 +36,13 @@ use anyhow::Result;
 use std::path::PathBuf;
 use std::sync::Arc;
 use tracing::{debug, info};
+
+/// Callback trait for tool execution confirmation.
+/// Implementations can prompt the user (CLI) or auto-approve/deny (HTTP/Telegram).
+pub trait ToolApprovalCallback: Send + Sync {
+    /// Return true to approve execution, false to deny.
+    fn approve(&self, tool_name: &str, arguments: &str) -> bool;
+}
 
 use crate::config::Config;
 use crate::memory::{MemoryChunk, MemoryManager};
@@ -82,6 +92,12 @@ pub struct Agent {
     cumulative_usage: Usage,
     /// Verified security policy content (None if missing, unsigned, or tampered)
     verified_security_policy: Option<String>,
+    /// Tool call counter per turn (reset each chat() call)
+    tool_call_count: usize,
+    /// Consecutive error counter (reset on success)
+    consecutive_error_count: usize,
+    /// Optional callback for tool approval confirmation
+    approval_callback: Option<Arc<dyn ToolApprovalCallback>>,
 }
 
 impl Agent {
@@ -198,6 +214,9 @@ impl Agent {
             tools,
             cumulative_usage: Usage::default(),
             verified_security_policy,
+            tool_call_count: 0,
+            consecutive_error_count: 0,
+            approval_callback: None,
         })
     }
 
@@ -217,6 +236,11 @@ impl Agent {
     /// Get the list of tools that require approval
     pub fn approval_required_tools(&self) -> &[String] {
         &self.app_config.tools.require_approval
+    }
+
+    /// Set the tool approval callback (for confirmation flow)
+    pub fn set_approval_callback(&mut self, callback: Arc<dyn ToolApprovalCallback>) {
+        self.approval_callback = Some(callback);
     }
 
     /// Switch to a different model
@@ -366,6 +390,10 @@ impl Agent {
         message: &str,
         images: Vec<ImageAttachment>,
     ) -> Result<String> {
+        // Reset per-turn rate limiting counters
+        self.tool_call_count = 0;
+        self.consecutive_error_count = 0;
+
         // Add user message with images
         self.session.add_message(Message {
             role: Role::User,
@@ -424,12 +452,67 @@ impl Agent {
                 let mut results = Vec::new();
 
                 for call in &calls {
+                    // Rate limiting: check tool call count
+                    self.tool_call_count += 1;
+                    if self.tool_call_count > self.app_config.tools.max_tool_calls_per_turn {
+                        let state_dir = self.app_config.workspace_path()
+                            .parent()
+                            .unwrap_or_else(|| std::path::Path::new("~/.localgpt"))
+                            .to_path_buf();
+                        let _ = crate::security::append_audit_entry_with_detail(
+                            &state_dir,
+                            crate::security::AuditAction::RateLimitExceeded,
+                            "",
+                            "handle_response",
+                            Some(&format!(
+                                "Tool call limit exceeded: {} > {}",
+                                self.tool_call_count,
+                                self.app_config.tools.max_tool_calls_per_turn
+                            )),
+                        );
+                        anyhow::bail!(
+                            "Rate limit: exceeded {} tool calls per turn",
+                            self.app_config.tools.max_tool_calls_per_turn
+                        );
+                    }
+
                     debug!(
                         "Executing tool: {} with args: {}",
                         call.name, call.arguments
                     );
 
                     let result = self.execute_tool(call).await;
+
+                    // Track consecutive errors
+                    match &result {
+                        Ok(_) => self.consecutive_error_count = 0,
+                        Err(_) => {
+                            self.consecutive_error_count += 1;
+                            if self.consecutive_error_count
+                                >= self.app_config.tools.max_consecutive_errors
+                            {
+                                let state_dir = self.app_config.workspace_path()
+                                    .parent()
+                                    .unwrap_or_else(|| std::path::Path::new("~/.localgpt"))
+                                    .to_path_buf();
+                                let _ = crate::security::append_audit_entry_with_detail(
+                                    &state_dir,
+                                    crate::security::AuditAction::RateLimitExceeded,
+                                    "",
+                                    "handle_response",
+                                    Some(&format!(
+                                        "Consecutive error limit: {}",
+                                        self.consecutive_error_count
+                                    )),
+                                );
+                                anyhow::bail!(
+                                    "Rate limit: {} consecutive tool errors",
+                                    self.consecutive_error_count
+                                );
+                            }
+                        }
+                    }
+
                     results.push(ToolResult {
                         call_id: call.id.clone(),
                         output: result.unwrap_or_else(|e| format!("Error: {}", e)),
@@ -471,9 +554,65 @@ impl Agent {
     }
 
     async fn execute_tool(&self, call: &ToolCall) -> Result<String> {
+        // Confirmation flow: check if tool matches any confirmation pattern
+        if let Some(ref callback) = self.approval_callback {
+            let needs_confirmation = self
+                .app_config
+                .tools
+                .require_confirmation_patterns
+                .iter()
+                .any(|p| call.name.contains(p) || call.arguments.contains(p));
+            if needs_confirmation && !callback.approve(&call.name, &call.arguments) {
+                anyhow::bail!("Tool execution denied by user: {}", call.name);
+            }
+        }
+
         for tool in &self.tools {
             if tool.name() == call.name {
                 let raw_output = tool.execute(&call.arguments).await?;
+
+                // Per-tool output size truncation
+                let truncated_output = if let Some(&max_bytes) =
+                    self.app_config.tools.max_output_bytes.get(&call.name)
+                {
+                    if raw_output.len() > max_bytes {
+                        format!(
+                            "{}\n\n[truncated: {} bytes total]",
+                            &raw_output[..max_bytes],
+                            raw_output.len()
+                        )
+                    } else {
+                        raw_output
+                    }
+                } else {
+                    raw_output
+                };
+
+                // Secret scanning: redact secrets from output
+                let (scanned_output, secret_matches) =
+                    secret_scanner::redact_secrets(&truncated_output);
+                if !secret_matches.is_empty() {
+                    let state_dir = self
+                        .app_config
+                        .workspace_path()
+                        .parent()
+                        .unwrap_or_else(|| std::path::Path::new("~/.localgpt"))
+                        .to_path_buf();
+                    let kinds: Vec<&str> = secret_matches.iter().map(|m| m.kind).collect();
+                    let _ = crate::security::append_audit_entry_with_detail(
+                        &state_dir,
+                        crate::security::AuditAction::SecretRedacted,
+                        "",
+                        &format!("tool:{}", call.name),
+                        Some(&format!("Redacted {} secret(s): {:?}", secret_matches.len(), kinds)),
+                    );
+                    tracing::warn!(
+                        "Redacted {} secret(s) from {} output: {:?}",
+                        secret_matches.len(),
+                        call.name,
+                        kinds
+                    );
+                }
 
                 // Apply sanitization if configured
                 if self.app_config.tools.use_content_delimiters {
@@ -482,7 +621,8 @@ impl Agent {
                     } else {
                         None
                     };
-                    let result = sanitize::wrap_tool_output(&call.name, &raw_output, max_chars);
+                    let result =
+                        sanitize::wrap_tool_output(&call.name, &scanned_output, max_chars);
 
                     // Log warnings for suspicious patterns
                     if self.app_config.tools.log_injection_warnings && !result.warnings.is_empty() {
@@ -496,7 +636,7 @@ impl Agent {
                     return Ok(result.content);
                 }
 
-                return Ok(raw_output);
+                return Ok(scanned_output);
             }
         }
         anyhow::bail!("Unknown tool: {}", call.name)
@@ -1042,8 +1182,12 @@ impl Agent {
 
     fn stream_with_tool_loop(&mut self) -> impl futures::Stream<Item = Result<StreamEvent>> + '_ {
         async_stream::stream! {
-            let max_tool_iterations = 10;
+            let max_tool_iterations = self.app_config.tools.max_tool_calls_per_turn;
             let mut iteration = 0;
+
+            // Reset per-turn counters
+            self.tool_call_count = 0;
+            self.consecutive_error_count = 0;
 
             loop {
                 iteration += 1;
@@ -1089,6 +1233,16 @@ impl Agent {
                             LLMResponseContent::ToolCalls(calls) => {
                         // Notify about tool calls
                         for call in &calls {
+                            // Rate limiting
+                            self.tool_call_count += 1;
+                            if self.tool_call_count > max_tool_iterations {
+                                yield Err(anyhow::anyhow!(
+                                    "Rate limit: exceeded {} tool calls per turn",
+                                    max_tool_iterations
+                                ));
+                                break;
+                            }
+
                             yield Ok(StreamEvent::ToolCallStart {
                                 name: call.name.clone(),
                                 id: call.id.clone(),
@@ -1097,7 +1251,26 @@ impl Agent {
 
                             // Execute tool
                             let result = self.execute_tool(call).await;
-                            let output = result.unwrap_or_else(|e| format!("Error: {}", e));
+                            let output = match &result {
+                                Ok(o) => {
+                                    self.consecutive_error_count = 0;
+                                    o.clone()
+                                }
+                                Err(e) => {
+                                    self.consecutive_error_count += 1;
+                                    format!("Error: {}", e)
+                                }
+                            };
+
+                            if self.consecutive_error_count
+                                >= self.app_config.tools.max_consecutive_errors
+                            {
+                                yield Err(anyhow::anyhow!(
+                                    "Rate limit: {} consecutive tool errors",
+                                    self.consecutive_error_count
+                                ));
+                                break;
+                            }
 
                             yield Ok(StreamEvent::ToolCallEnd {
                                 name: call.name.clone(),
