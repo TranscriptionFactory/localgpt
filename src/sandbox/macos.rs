@@ -45,9 +45,12 @@ pub fn exec_sandboxed(command: &str) -> ! {
 
 /// Generate a Seatbelt SBPL profile string from a SandboxPolicy.
 ///
-/// Strategy: allow reads broadly (bash needs access to system libraries,
-/// dyld cache, etc.), then deny credential paths specifically. Restrict
-/// writes to workspace and /tmp only. Deny all network access.
+/// Strategy: allow broad file reads (macOS bash needs access to dyld cache,
+/// system frameworks, and paths that are impractical to enumerate), then deny
+/// the user's home directory to prevent reading repos, personal files, etc.
+/// Re-allow workspace and configured paths within home. Restrict writes to
+/// workspace + /tmp. Deny network. SBPL evaluates rules in order — last match
+/// wins for deny/allow conflicts.
 pub fn generate_sbpl_profile(policy: &SandboxPolicy) -> String {
     let mut rules = vec![
         "(version 1)".to_string(),
@@ -63,27 +66,39 @@ pub fn generate_sbpl_profile(policy: &SandboxPolicy) -> String {
         "(allow sysctl*)".to_string(),
         // Pseudo-terminals — needed for interactive commands
         "(allow pseudo-tty)".to_string(),
-        // File reads — allow broadly, then deny credentials
+        // Broad file reads — bash and tools need system libs, dyld cache, etc.
         "(allow file-read*)".to_string(),
-        "(allow file-read-metadata)".to_string(),
         // /dev devices — bash needs /dev/null, /dev/urandom, tty
         "(allow file-write* (subpath \"/dev\"))".to_string(),
     ];
 
-    // Allow writes to workspace
+    // Deny reads for the user's home directory — prevents reading repos,
+    // personal files, and other data outside the workspace. Later rules
+    // re-allow workspace and configured paths.
+    let home = home_dir();
+    let home_escaped = escape_sbpl_path(&home.to_string_lossy());
+    rules.push(format!(
+        "(deny file-read* file-write* (subpath \"{}\"))",
+        home_escaped
+    ));
+
+    // Re-allow read+write for workspace (within home)
     let workspace_escaped = escape_sbpl_path(&policy.workspace_path.to_string_lossy());
     rules.push(format!(
-        "(allow file-write* (subpath \"{}\"))",
+        "(allow file-read* file-write* (subpath \"{}\"))",
         workspace_escaped
     ));
 
-    // Allow writes to extra writable paths (/tmp, user-configured)
+    // Re-allow read+write for extra writable paths (/tmp, user-configured)
     for path in &policy.extra_write_paths {
         let escaped = escape_sbpl_path(&path.to_string_lossy());
-        rules.push(format!("(allow file-write* (subpath \"{}\"))", escaped));
+        rules.push(format!(
+            "(allow file-read* file-write* (subpath \"{}\"))",
+            escaped
+        ));
     }
 
-    // Deny credential directories (overrides the broad file-read* allow above)
+    // Deny credential directories explicitly (belt-and-suspenders over home deny)
     for path in &policy.deny_paths {
         let escaped = escape_sbpl_path(&path.to_string_lossy());
         rules.push(format!(
@@ -108,6 +123,13 @@ pub fn generate_sbpl_profile(policy: &SandboxPolicy) -> String {
     }
 
     rules.join("\n")
+}
+
+/// Get the user's home directory.
+fn home_dir() -> std::path::PathBuf {
+    directories::BaseDirs::new()
+        .map(|b| b.home_dir().to_path_buf())
+        .unwrap_or_else(|| std::path::PathBuf::from("/Users/unknown"))
 }
 
 /// Escape a path string for use in SBPL profiles.
@@ -151,17 +173,29 @@ mod tests {
     }
 
     #[test]
-    fn test_generate_sbpl_profile_allows_workspace_writes() {
+    fn test_generate_sbpl_profile_allows_workspace_read_write() {
         let policy = test_policy();
         let profile = generate_sbpl_profile(&policy);
-        assert!(profile.contains("(allow file-write* (subpath \"/Users/test/project\"))"));
+        assert!(
+            profile.contains("(allow file-read* file-write* (subpath \"/Users/test/project\"))")
+        );
     }
 
     #[test]
-    fn test_generate_sbpl_profile_allows_broad_reads() {
+    fn test_generate_sbpl_profile_denies_home_directory() {
         let policy = test_policy();
         let profile = generate_sbpl_profile(&policy);
-        assert!(profile.contains("(allow file-read*)"));
+        let home = home_dir();
+        let home_str = home.to_string_lossy();
+        // Home directory should be denied
+        assert!(
+            profile.contains(&format!(
+                "(deny file-read* file-write* (subpath \"{}\"))",
+                home_str
+            )),
+            "Profile should deny home directory: {}",
+            home_str
+        );
     }
 
     #[test]
@@ -193,9 +227,29 @@ mod tests {
     }
 
     #[test]
-    fn test_generate_sbpl_profile_allows_tmp_writes() {
+    fn test_generate_sbpl_profile_allows_tmp_read_write() {
         let policy = test_policy();
         let profile = generate_sbpl_profile(&policy);
-        assert!(profile.contains("(allow file-write* (subpath \"/tmp\"))"));
+        assert!(profile.contains("(allow file-read* file-write* (subpath \"/tmp\"))"));
+    }
+
+    #[test]
+    fn test_generate_sbpl_profile_has_broad_read_then_home_deny() {
+        let policy = test_policy();
+        let profile = generate_sbpl_profile(&policy);
+        // Should have broad file-read* (bash needs it for system libs)
+        assert!(profile.contains("(allow file-read*)"));
+        // But home directory should be denied AFTER the broad allow
+        let home = home_dir();
+        let home_deny = format!(
+            "(deny file-read* file-write* (subpath \"{}\"))",
+            home.to_string_lossy()
+        );
+        let read_pos = profile.find("(allow file-read*)").unwrap();
+        let deny_pos = profile.find(&home_deny).unwrap();
+        assert!(
+            deny_pos > read_pos,
+            "Home deny must come after broad read allow"
+        );
     }
 }

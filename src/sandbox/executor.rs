@@ -32,6 +32,7 @@ pub async fn run_sandboxed(
             .arg0("localgpt-sandbox")
             .arg(&policy_json)
             .arg(command)
+            .current_dir(&policy.workspace_path)
             .stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::piped())
             .output(),
