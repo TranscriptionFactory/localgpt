@@ -316,7 +316,7 @@ async fn handle_command(
                             .await?;
                         }
                         Err(e) => {
-                            bot.send_message(chat_id, &format!("Compact failed: {}", e))
+                            bot.send_message(chat_id, format!("Compact failed: {}", e))
                                 .await?;
                         }
                     }
@@ -362,7 +362,7 @@ async fn handle_command(
                         }
                     }
                     Err(e) => {
-                        bot.send_message(chat_id, &format!("Search error: {}", e))
+                        bot.send_message(chat_id, format!("Search error: {}", e))
                             .await?;
                     }
                 }
@@ -377,7 +377,7 @@ async fn handle_command(
                     .unwrap_or_else(|| state.config.agent.default_model.clone());
                 bot.send_message(
                     chat_id,
-                    &format!("Current model: {}\n\nUsage: /model <name>", current),
+                    format!("Current model: {}\n\nUsage: /model <name>", current),
                 )
                 .await?;
             } else {
@@ -385,11 +385,11 @@ async fn handle_command(
                 if let Some(entry) = sessions.get_mut(&chat_id.0) {
                     match entry.agent.set_model(args) {
                         Ok(()) => {
-                            bot.send_message(chat_id, &format!("Switched to model: {}", args))
+                            bot.send_message(chat_id, format!("Switched to model: {}", args))
                                 .await?;
                         }
                         Err(e) => {
-                            bot.send_message(chat_id, &format!("Failed to switch model: {}", e))
+                            bot.send_message(chat_id, format!("Failed to switch model: {}", e))
                                 .await?;
                         }
                     }
@@ -414,7 +414,7 @@ async fn handle_command(
                     }
                 }
                 Err(e) => {
-                    bot.send_message(chat_id, &format!("Failed to load skills: {}", e))
+                    bot.send_message(chat_id, format!("Failed to load skills: {}", e))
                         .await?;
                 }
             }
@@ -500,9 +500,9 @@ fn markdown_to_html(text: &str) -> String {
             continue;
         }
 
-        if line.starts_with("```") {
+        if let Some(rest) = line.strip_prefix("```") {
             in_code_block = true;
-            code_block_lang = line[3..].trim().to_string();
+            code_block_lang = rest.trim().to_string();
             continue;
         }
 
@@ -636,7 +636,7 @@ async fn handle_chat(
     // Get or create agent session, then stream response
     let mut sessions = state.sessions.lock().await;
 
-    if !sessions.contains_key(&chat_id.0) {
+    if let std::collections::hash_map::Entry::Vacant(e) = sessions.entry(chat_id.0) {
         let agent_config = AgentConfig {
             model: state.config.agent.default_model.clone(),
             context_window: state.config.agent.context_window,
@@ -645,25 +645,22 @@ async fn handle_chat(
 
         match Agent::new(agent_config, &state.config, state.memory.clone()).await {
             Ok(mut agent) => {
-                if let Err(e) = agent.new_session().await {
-                    error!("Failed to create session: {}", e);
+                if let Err(err) = agent.new_session().await {
+                    error!("Failed to create session: {}", err);
                     let _ = bot
-                        .edit_message_text(chat_id, msg_id, &format!("Error: {}", e))
+                        .edit_message_text(chat_id, msg_id, format!("Error: {}", err))
                         .await;
                     return Ok(());
                 }
-                sessions.insert(
-                    chat_id.0,
-                    SessionEntry {
-                        agent,
-                        last_accessed: Instant::now(),
-                    },
-                );
+                e.insert(SessionEntry {
+                    agent,
+                    last_accessed: Instant::now(),
+                });
             }
-            Err(e) => {
-                error!("Failed to create agent: {}", e);
+            Err(err) => {
+                error!("Failed to create agent: {}", err);
                 let _ = bot
-                    .edit_message_text(chat_id, msg_id, &format!("Error: {}", e))
+                    .edit_message_text(chat_id, msg_id, format!("Error: {}", err))
                     .await;
                 return Ok(());
             }

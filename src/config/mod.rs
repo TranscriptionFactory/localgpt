@@ -83,7 +83,7 @@ pub struct ToolsConfig {
     pub use_content_delimiters: bool,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct SecurityConfig {
     /// Abort agent startup on tamper or suspicious content (default: false)
     ///
@@ -92,14 +92,6 @@ pub struct SecurityConfig {
     /// warns and falls back to hardcoded-only security.
     #[serde(default)]
     pub strict_policy: bool,
-}
-
-impl Default for SecurityConfig {
-    fn default() -> Self {
-        Self {
-            strict_policy: false,
-        }
-    }
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
