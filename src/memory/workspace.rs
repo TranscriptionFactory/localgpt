@@ -128,24 +128,27 @@ If you change this file, tell the user — it's your soul, and they should know.
 _This file is yours to evolve. As you learn who you are, update it._
 "#;
 
-const LOCALGPT_POLICY_TEMPLATE: &str = r#"# LocalGPT Security Policy
+const LOCALGPT_POLICY_TEMPLATE: &str = r#"# LocalGPT.md
 
-Additional security rules for this workspace. These rules ADD restrictions
-on top of LocalGPT's built-in safety — they cannot weaken or override it.
+Your standing instructions to the AI — always present, always last.
+
+Whatever you write here is injected at the end of every conversation turn,
+right before the AI responds. Use it for conventions, boundaries, preferences,
+and reminders you want the AI to always follow.
 
 Edit this file, then run `localgpt md sign` to activate changes.
 
-## Rules
+## Conventions
 
-- (Add your workspace-specific security rules here)
+- (Add your coding standards and project conventions here)
 
-## Blocked Patterns
+## Boundaries
 
-- (Add shell patterns or commands to block, e.g., `curl.*external`)
+- (Add security rules and access restrictions here)
 
-## Notes
+## Reminders
 
-- (Add compliance context, e.g., "This workspace handles medical records")
+- (Add things the AI tends to forget in long sessions)
 "#;
 
 const GITIGNORE_TEMPLATE: &str = r#"# LocalGPT workspace .gitignore
