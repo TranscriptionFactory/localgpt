@@ -4,17 +4,17 @@ sidebar_position: 16
 
 # LocalGPT.md
 
-## Your standing instructions to the AI — always present, always last
+## Your standing instructions to the AI — always present, near the end
 
-`LocalGPT.md` is a plain-text Markdown file that lives in your workspace alongside `SOUL.md`, `MEMORY.md`, and `HEARTBEAT.md`. Whatever you write in this file will be injected at the end of every conversation turn — after all messages, after all tool outputs, as the final thing the AI reads before it responds.
+`LocalGPT.md` is a plain-text Markdown file that lives in your workspace alongside `SOUL.md`, `MEMORY.md`, and `HEARTBEAT.md`. Whatever you write in this file will be injected near the end of every conversation turn — after all messages and tool outputs, just before a hardcoded security suffix that always occupies the final position.
 
-This makes `LocalGPT.md` the single most persistent and influential file in your workspace. It is your tenets, your ground rules, your standing orders, your guardrails, your conventions, and your reminders — all in one place, always in effect.
+This makes `LocalGPT.md` one of the most persistent and influential files in your workspace. It is your tenets, your ground rules, your standing orders, your guardrails, your conventions, and your reminders — all in one place, always in effect.
 
 ## What it does
 
-Every time the AI is about to respond, LocalGPT assembles a context window from your conversation history, tool results, memory, and system instructions. The content of `LocalGPT.md` is appended at the very end of this context, right before the AI generates its response.
+Every time the AI is about to respond, LocalGPT assembles a context window from your conversation history, tool results, memory, and system instructions. The content of `LocalGPT.md` is injected near the end of this context — immediately before a hardcoded security suffix that always occupies the final position.
 
-In large language models, **position matters**. Content at the end of the context window receives stronger attention weighting. By placing your instructions last, `LocalGPT.md` acts as a persistent anchor — a constant reminder that doesn't get buried under conversation noise, even in long sessions.
+In large language models, **position matters**. Content near the end of the context window receives stronger attention weighting. By placing your instructions in this high-attention zone, `LocalGPT.md` acts as a persistent anchor — a constant reminder that doesn't get buried under conversation noise, even in long sessions.
 
 Think of it as:
 
@@ -22,7 +22,7 @@ Think of it as:
 - A **standing brief** handed to your team at the start of every meeting
 - The **principles and conventions** your AI should always keep in mind
 - A **behavioral anchor** that resists drift over long conversations
-- The **last word** you always get before the AI speaks
+- Your **standing orders** that the AI sees near the end of every turn
 
 ## What to put in it
 
@@ -108,7 +108,7 @@ Think of `LocalGPT.md` as a strong cultural norm — followed naturally and cons
 | **Location** | `~/.local/share/localgpt/workspace/LocalGPT.md` |
 | **Format** | Plain Markdown (UTF-8) |
 | **Size limit** | 4,096 characters (~1,000 tokens) |
-| **Injected** | End of every conversation turn |
+| **Injected** | Near end of every turn (before security suffix) |
 | **Editable by AI** | No — write-protected and signature-verified |
 | **Required** | No — LocalGPT works without it, using built-in defaults |
 | **Sign after editing** | `localgpt md sign` |
