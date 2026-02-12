@@ -377,7 +377,7 @@ impl Tool for WriteFileTool {
                 );
                 anyhow::bail!(
                     "Cannot write to protected file: {}. This file is managed by the security system. \
-                     Use `localgpt security sign` to update the security policy.",
+                     Use `localgpt md sign` to update the security policy.",
                     path.display()
                 );
             }

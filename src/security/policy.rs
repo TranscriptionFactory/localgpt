@@ -41,7 +41,7 @@ pub enum PolicyVerification {
 
     /// `LocalGPT.md` exists but has no manifest — not yet signed.
     ///
-    /// The user should run `localgpt security sign` to activate the policy.
+    /// The user should run `localgpt md sign` to activate the policy.
     Unsigned,
 
     /// HMAC mismatch — content was modified after signing.
@@ -105,7 +105,7 @@ pub fn load_and_verify_policy(workspace: &Path, state_dir: &Path) -> PolicyVerif
     // Step 2: Check if manifest exists
     let manifest_path = workspace.join(signing::MANIFEST_FILENAME);
     if !manifest_path.exists() {
-        warn!("LocalGPT.md exists but is not signed. Run `localgpt security sign` to activate.");
+        warn!("LocalGPT.md exists but is not signed. Run `localgpt md sign` to activate.");
         return PolicyVerification::Unsigned;
     }
 

@@ -131,7 +131,7 @@ impl Agent {
                         );
                         anyhow::bail!(
                             "Security policy tamper detected. \
-                             Re-sign with `localgpt security sign` or remove LocalGPT.md to continue."
+                             Re-sign with `localgpt md sign` or remove LocalGPT.md to continue."
                         );
                     }
                     tracing::warn!("LocalGPT.md tamper detected. Using hardcoded security only.");
@@ -144,7 +144,7 @@ impl Agent {
                         "",
                         "session_start",
                     );
-                    info!("LocalGPT.md not signed. Run `localgpt security sign` to activate.");
+                    info!("LocalGPT.md not signed. Run `localgpt md sign` to activate.");
                     None
                 }
                 crate::security::PolicyVerification::SuspiciousContent(warnings) => {
@@ -159,7 +159,7 @@ impl Agent {
                         tracing::error!("LocalGPT.md contains suspicious patterns: {:?}", warnings);
                         anyhow::bail!(
                             "Security policy rejected — suspicious content detected: {}. \
-                             Fix LocalGPT.md and re-sign with `localgpt security sign`.",
+                             Fix LocalGPT.md and re-sign with `localgpt md sign`.",
                             warnings.join(", ")
                         );
                     }

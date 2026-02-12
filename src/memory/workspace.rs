@@ -133,7 +133,7 @@ const LOCALGPT_POLICY_TEMPLATE: &str = r#"# LocalGPT Security Policy
 Additional security rules for this workspace. These rules ADD restrictions
 on top of LocalGPT's built-in safety — they cannot weaken or override it.
 
-Edit this file, then run `localgpt security sign` to activate changes.
+Edit this file, then run `localgpt md sign` to activate changes.
 
 ## Rules
 
@@ -159,7 +159,7 @@ const GITIGNORE_TEMPLATE: &str = r#"# LocalGPT workspace .gitignore
 # - memory/*.md (daily logs)
 # - skills/ (custom skills)
 
-# Security manifest (managed by localgpt security sign)
+# Security manifest (managed by localgpt md sign)
 .localgpt_manifest.json
 
 # Temporary files

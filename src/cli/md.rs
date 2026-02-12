@@ -1,6 +1,6 @@
-//! CLI subcommand: `localgpt security`
+//! CLI subcommand: `localgpt md`
 //!
-//! Manages the workspace security policy: signing, verification,
+//! Manages the workspace security policy (LocalGPT.md): signing, verification,
 //! audit log inspection, and security posture reporting.
 
 use anyhow::Result;
@@ -10,13 +10,13 @@ use localgpt::config::Config;
 use localgpt::security;
 
 #[derive(Args)]
-pub struct SecurityArgs {
+pub struct MdArgs {
     #[command(subcommand)]
-    pub command: SecurityCommands,
+    pub command: MdCommands,
 }
 
 #[derive(Subcommand)]
-pub enum SecurityCommands {
+pub enum MdCommands {
     /// Sign LocalGPT.md with device key
     Sign,
 
@@ -38,12 +38,12 @@ pub enum SecurityCommands {
     Status,
 }
 
-pub async fn run(args: SecurityArgs) -> Result<()> {
+pub async fn run(args: MdArgs) -> Result<()> {
     match args.command {
-        SecurityCommands::Sign => sign_policy().await,
-        SecurityCommands::Verify => verify_policy().await,
-        SecurityCommands::Audit { json, filter } => show_audit(json, filter).await,
-        SecurityCommands::Status => show_status().await,
+        MdCommands::Sign => sign_policy().await,
+        MdCommands::Verify => verify_policy().await,
+        MdCommands::Audit { json, filter } => show_audit(json, filter).await,
+        MdCommands::Status => show_status().await,
     }
 }
 
@@ -108,12 +108,12 @@ async fn verify_policy() -> Result<()> {
         }
         security::PolicyVerification::Unsigned => {
             println!("Policy: UNSIGNED");
-            println!("  Run `localgpt security sign` to activate.");
+            println!("  Run `localgpt md sign` to activate.");
         }
         security::PolicyVerification::TamperDetected => {
             println!("Policy: TAMPER DETECTED");
             println!(
-                "  The file was modified after signing. Re-sign with `localgpt security sign`."
+                "  The file was modified after signing. Re-sign with `localgpt md sign`."
             );
 
             security::append_audit_entry(
@@ -132,7 +132,7 @@ async fn verify_policy() -> Result<()> {
         }
         security::PolicyVerification::ManifestCorrupted => {
             println!("Policy: MANIFEST CORRUPTED");
-            println!("  Re-sign with `localgpt security sign`.");
+            println!("  Re-sign with `localgpt md sign`.");
         }
         security::PolicyVerification::SuspiciousContent(warnings) => {
             println!("Policy: REJECTED (suspicious content)");
@@ -244,7 +244,7 @@ async fn show_status() -> Result<()> {
         let result = security::load_and_verify_policy(&workspace, state_dir);
         let status = match result {
             security::PolicyVerification::Valid(_) => "Valid (signed and verified)",
-            security::PolicyVerification::Unsigned => "Unsigned (run `localgpt security sign`)",
+            security::PolicyVerification::Unsigned => "Unsigned (run `localgpt md sign`)",
             security::PolicyVerification::TamperDetected => "TAMPER DETECTED",
             security::PolicyVerification::Missing => "Missing",
             security::PolicyVerification::ManifestCorrupted => "Manifest corrupted",

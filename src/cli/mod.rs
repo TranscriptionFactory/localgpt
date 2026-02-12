@@ -6,7 +6,7 @@ pub mod daemon;
 pub mod desktop;
 pub mod memory;
 pub mod sandbox;
-pub mod security;
+pub mod md;
 
 use clap::{Parser, Subcommand};
 
@@ -58,8 +58,8 @@ pub enum Commands {
     /// Configuration management
     Config(config::ConfigArgs),
 
-    /// Security policy management
-    Security(security::SecurityArgs),
+    /// LocalGPT.md policy management
+    Md(md::MdArgs),
 
     /// Shell sandbox management
     Sandbox(sandbox::SandboxArgs),
