@@ -112,6 +112,9 @@ nix = { version = "0.31", features = ["process", "resource", "signal"] }
 landlock = "0.4"
 seccompiler = "0.5"
 
+[target.'cfg(target_os = "linux")'.build-dependencies]
+cc = "1"
+
 [dev-dependencies]
 tempfile = "3.25"
 mockall = "0.14"
