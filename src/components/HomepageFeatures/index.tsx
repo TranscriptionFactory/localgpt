@@ -61,12 +61,14 @@ const FeatureList: FeatureItem[] = [
     ),
   },
   {
-    title: 'Sandboxed & Secure',
+    title: 'Sandboxed by Default',
     description: (
       <>
         Kernel-enforced shell sandbox (Landlock + seccomp + Seatbelt) on
         every command — no Docker required. Signed workspace security policies
         with HMAC tamper detection, protected files, and hash-chained audit logs.
+        Defense in depth, not a guarantee — no system is absolutely secure,
+        and LLM agents are inherently probabilistic.
       </>
     ),
   },

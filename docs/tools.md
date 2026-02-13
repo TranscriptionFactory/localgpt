@@ -266,9 +266,13 @@ User: "What files are in my project?"
 
 ## Safety Considerations
 
+These measures reduce risk but do not eliminate it. LLMs are probabilistic systems — no prompt or tooling arrangement can guarantee that an AI agent will never take an unintended action.
+
 - **Shell commands** run inside a [kernel-enforced sandbox](/docs/sandbox) — write access limited to workspace, network denied, credentials blocked
 - **File tools** (`write_file`, `edit_file`, `read_file`) are path-validated and restricted to the workspace
 - **Protected files** — the agent cannot write to `LocalGPT.md`, `.localgpt_manifest.json`, or `IDENTITY.md` (see [LocalGPT.md](/docs/localgpt))
 - **No sudo** escalation is performed automatically
 - **Web requests** are outbound only with SSRF protection
 - **Memory** stays entirely local
+
+Always review agent actions, especially in sensitive environments. The sandbox and protections are a safety net, not a substitute for human oversight.

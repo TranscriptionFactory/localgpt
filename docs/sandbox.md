@@ -4,11 +4,11 @@ sidebar_position: 15
 
 # Shell Sandbox
 
-LocalGPT enforces **kernel-level isolation** on every shell command the AI executes. No Docker, no containers, no external dependencies — sandboxing is built into the single binary and enabled by default.
+LocalGPT applies **kernel-level isolation** on every shell command the AI executes. No Docker, no containers, no external dependencies — sandboxing is built into the single binary and enabled by default. These are best-effort defenses that significantly reduce risk, not guarantees of absolute security.
 
 ## Why Sandboxing Matters
 
-AI agents with shell access can execute arbitrary commands with your full user permissions. Without isolation, a hallucinated or prompt-injected command could delete files, exfiltrate secrets, or escalate privileges. LocalGPT solves this at the OS level — not with regex blocklists, but with kernel-enforced restrictions that cannot be bypassed from within the sandbox.
+AI agents with shell access can execute arbitrary commands with your full user permissions. Without isolation, a hallucinated or prompt-injected command could delete files, exfiltrate secrets, or escalate privileges. LocalGPT mitigates this at the OS level — not with regex blocklists, but with kernel-enforced restrictions that are significantly harder to bypass than application-level controls. No sandbox is perfect, but kernel-level enforcement raises the bar substantially.
 
 ## How It Works
 
@@ -85,7 +85,7 @@ Uses Apple's **Seatbelt** framework via `sandbox-exec`. LocalGPT generates SBPL 
 
 ## Graceful Degradation
 
-Not all kernels support all features. LocalGPT detects available capabilities at startup and operates at the highest available level. The user is **never silently unprotected**.
+Not all kernels support all features. LocalGPT detects available capabilities at startup and operates at the highest available level. When full kernel support isn't available, LocalGPT **always warns you** and explains what protections are active.
 
 | Level | Requirements | Protections | User Experience |
 |-------|-------------|-------------|-----------------|
@@ -95,6 +95,15 @@ Not all kernels support all features. LocalGPT detects available capabilities at
 | None | No kernel support | rlimits + timeout only | Explicit acknowledgment required |
 
 Unlike Codex (which panics on missing Landlock), LocalGPT warns and degrades. Unlike OpenClaw (which defaults to no sandbox), LocalGPT defaults to the highest available level.
+
+## Limitations
+
+Sandboxing significantly reduces the attack surface, but it is not a silver bullet:
+
+- **LLMs are probabilistic** — an AI agent may find unexpected ways to accomplish tasks that weren't anticipated by sandbox rules. Prompt injection and jailbreaks are active areas of research with no complete solutions yet.
+- **Kernel features vary** — older kernels may lack Landlock or seccomp support, reducing the effective protection level. LocalGPT warns you, but degraded mode provides weaker isolation.
+- **Allowed paths are still writable** — the sandbox restricts *where* the agent can write, but within the workspace it has full access. A compromised agent could still modify your project files.
+- **No sandbox is escape-proof** — kernel vulnerabilities, while rare, can exist. Defense in depth (sandboxing + audit logs + protected files + human review) is the strategy, not reliance on any single layer.
 
 ## Resource Limits
 

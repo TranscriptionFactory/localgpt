@@ -16,7 +16,7 @@ LocalGPT is a **local AI assistant with persistent memory, semantic search, and 
 - **Multi-Provider Support** - Works with Claude CLI, Anthropic API, OpenAI, and local Ollama models — all with full tool calling support
 - **Autonomous Heartbeat** - Daemon mode with scheduled background tasks that run automatically
 - **Skills System** - Extensible skills for specialized tasks
-- **Shell Sandbox** - Kernel-enforced isolation (Landlock + seccomp + Seatbelt) on every shell command. Zero configuration, enabled by default, graceful degradation.
+- **Shell Sandbox** - Kernel-level isolation (Landlock + seccomp + Seatbelt) on every shell command. Zero configuration, enabled by default, graceful degradation. [Not a guarantee](/docs/sandbox#limitations) — defense in depth.
 - **Standing Instructions** - Cryptographically signed `LocalGPT.md` for persistent, end-of-context directives — coding conventions, security boundaries, workflow preferences — with HMAC-SHA256 tamper detection
 - **Session Management** - Multi-session support with automatic context compaction
 - **HTTP API & WebSocket** - RESTful API and real-time WebSocket for integrations
