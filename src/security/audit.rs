@@ -29,7 +29,7 @@ use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
-const AUDIT_FILENAME: &str = ".security_audit.jsonl";
+const AUDIT_FILENAME: &str = "localgpt.audit.jsonl";
 
 /// The hash used for the first entry in the chain (no predecessor).
 const GENESIS_HASH: &str = "0000000000000000000000000000000000000000000000000000000000000000";

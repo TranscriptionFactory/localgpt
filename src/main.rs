@@ -73,6 +73,7 @@ async fn async_main(cli: Cli) -> Result<()> {
         Commands::Daemon(args) => localgpt::cli::daemon::run(args, &cli.agent).await,
         Commands::Memory(args) => localgpt::cli::memory::run(args, &cli.agent).await,
         Commands::Config(args) => localgpt::cli::config::run(args).await,
+        Commands::Paths => localgpt::cli::paths::run(),
         Commands::Md(args) => localgpt::cli::md::run(args).await,
         Commands::Sandbox(args) => localgpt::cli::sandbox::run(args).await,
     }

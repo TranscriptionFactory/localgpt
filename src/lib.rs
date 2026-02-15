@@ -18,6 +18,7 @@ pub mod desktop;
 pub mod gen3d;
 pub mod heartbeat;
 pub mod memory;
+pub mod paths;
 pub mod sandbox;
 pub mod security;
 pub mod server;

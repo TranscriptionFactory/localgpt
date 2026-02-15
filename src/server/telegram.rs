@@ -28,9 +28,6 @@ const MAX_MESSAGE_LENGTH: usize = 4096;
 /// Debounce interval for message edits (seconds)
 const EDIT_DEBOUNCE_SECS: u64 = 2;
 
-/// Pairing file relative to state dir
-const PAIRING_FILE: &str = "telegram_paired_user.json";
-
 #[derive(Debug, Serialize, Deserialize)]
 struct PairedUser {
     user_id: u64,
@@ -53,8 +50,8 @@ struct BotState {
 }
 
 fn pairing_file_path() -> Result<PathBuf> {
-    let state_dir = crate::agent::get_state_dir()?;
-    Ok(state_dir.join(PAIRING_FILE))
+    let paths = crate::paths::Paths::resolve()?;
+    Ok(paths.pairing_file())
 }
 
 fn load_paired_user() -> Option<PairedUser> {

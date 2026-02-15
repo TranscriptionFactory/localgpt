@@ -451,14 +451,13 @@ async fn run_heartbeat_once(agent_id: &str) -> Result<()> {
 }
 
 fn get_pid_file() -> Result<PathBuf> {
-    // Put PID file in state dir (~/.localgpt/), not workspace
-    let state_dir = crate::agent::get_state_dir()?;
-    Ok(state_dir.join("daemon.pid"))
+    let paths = crate::paths::Paths::resolve()?;
+    Ok(paths.pid_file())
 }
 
 fn get_log_file(retention_days: u32) -> Result<PathBuf> {
-    let state_dir = crate::agent::get_state_dir()?;
-    let logs_dir = state_dir.join("logs");
+    let paths = crate::paths::Paths::resolve()?;
+    let logs_dir = paths.logs_dir();
     fs::create_dir_all(&logs_dir)?;
 
     // Prune old logs only if retention_days > 0

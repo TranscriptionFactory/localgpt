@@ -8,6 +8,7 @@ pub mod desktop;
 pub mod gen3d;
 pub mod md;
 pub mod memory;
+pub mod paths;
 pub mod sandbox;
 
 use clap::{Parser, Subcommand};
@@ -66,6 +67,9 @@ pub enum Commands {
 
     /// LocalGPT.md policy management
     Md(md::MdArgs),
+
+    /// Show resolved XDG directory paths
+    Paths,
 
     /// Shell sandbox management
     Sandbox(sandbox::SandboxArgs),

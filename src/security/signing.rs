@@ -35,7 +35,7 @@ type HmacSha256 = Hmac<Sha256>;
 /// Filename of the signature manifest in the workspace directory.
 pub const MANIFEST_FILENAME: &str = ".localgpt_manifest.json";
 
-const DEVICE_KEY_FILENAME: &str = ".device_key";
+const DEVICE_KEY_FILENAME: &str = "localgpt.device.key";
 const DEVICE_KEY_LEN: usize = 32;
 
 /// Signature manifest for `LocalGPT.md`.

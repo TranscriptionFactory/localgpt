@@ -50,12 +50,11 @@ pub async fn run(args: MdArgs) -> Result<()> {
 async fn sign_policy() -> Result<()> {
     let config = Config::load()?;
     let workspace = config.workspace_path();
-    let state_dir = workspace
-        .parent()
-        .ok_or_else(|| anyhow::anyhow!("Workspace has no parent directory"))?;
+    let data_dir = &config.paths.data_dir;
+    let state_dir = &config.paths.state_dir;
 
     // Ensure device key exists
-    security::ensure_device_key(state_dir)?;
+    security::ensure_device_key(data_dir)?;
 
     // Check policy file exists
     let policy_path = workspace.join(security::POLICY_FILENAME);
@@ -68,7 +67,7 @@ async fn sign_policy() -> Result<()> {
     }
 
     // Sign
-    let manifest = security::sign_policy(state_dir, &workspace, "cli")?;
+    let manifest = security::sign_policy(data_dir, &workspace, "cli")?;
 
     // Write audit entry
     security::append_audit_entry(
@@ -91,11 +90,10 @@ async fn sign_policy() -> Result<()> {
 async fn verify_policy() -> Result<()> {
     let config = Config::load()?;
     let workspace = config.workspace_path();
-    let state_dir = workspace
-        .parent()
-        .ok_or_else(|| anyhow::anyhow!("Workspace has no parent directory"))?;
+    let data_dir = &config.paths.data_dir;
+    let state_dir = &config.paths.state_dir;
 
-    let result = security::load_and_verify_policy(&workspace, state_dir);
+    let result = security::load_and_verify_policy(&workspace, data_dir);
 
     match result {
         security::PolicyVerification::Valid(content) => {
@@ -145,10 +143,7 @@ async fn verify_policy() -> Result<()> {
 
 async fn show_audit(json_output: bool, filter: Option<String>) -> Result<()> {
     let config = Config::load()?;
-    let workspace = config.workspace_path();
-    let state_dir = workspace
-        .parent()
-        .ok_or_else(|| anyhow::anyhow!("Workspace has no parent directory"))?;
+    let state_dir = &config.paths.state_dir;
 
     let mut entries = security::read_audit_log(state_dir)?;
 
@@ -230,16 +225,15 @@ async fn show_audit(json_output: bool, filter: Option<String>) -> Result<()> {
 async fn show_status() -> Result<()> {
     let config = Config::load()?;
     let workspace = config.workspace_path();
-    let state_dir = workspace
-        .parent()
-        .ok_or_else(|| anyhow::anyhow!("Workspace has no parent directory"))?;
+    let data_dir = &config.paths.data_dir;
+    let state_dir = &config.paths.state_dir;
 
     println!("Security Status:");
 
     // Policy file
     let policy_path = workspace.join(security::POLICY_FILENAME);
     if policy_path.exists() {
-        let result = security::load_and_verify_policy(&workspace, state_dir);
+        let result = security::load_and_verify_policy(&workspace, data_dir);
         let status = match result {
             security::PolicyVerification::Valid(_) => "Valid (signed and verified)",
             security::PolicyVerification::Unsigned => "Unsigned (run `localgpt md sign`)",
@@ -262,7 +256,7 @@ async fn show_status() -> Result<()> {
     }
 
     // Device key
-    let key_path = state_dir.join(".device_key");
+    let key_path = config.paths.device_key();
     if key_path.exists() {
         println!("  Device Key: Present");
     } else {

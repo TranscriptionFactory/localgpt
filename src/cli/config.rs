@@ -144,7 +144,10 @@ interval = "30m"
 # end = "22:00"
 
 [memory]
-workspace = "~/.localgpt/workspace"
+# Workspace directory for memory files (MEMORY.md, HEARTBEAT.md, etc.)
+# Default: XDG data dir (~/.local/share/localgpt/workspace)
+# Override with: LOCALGPT_WORKSPACE=/path or LOCALGPT_PROFILE=work
+# workspace = "~/.local/share/localgpt/workspace"
 
 [server]
 enabled = true

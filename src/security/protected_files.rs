@@ -24,7 +24,7 @@ pub const PROTECTED_FILES: &[&str] = &["LocalGPT.md", ".localgpt_manifest.json",
 /// The device key and audit log live in `~/.localgpt/` (the state
 /// directory), which is outside the workspace and not indexed by memory.
 /// These paths are checked as filename suffixes for defense in depth.
-pub const PROTECTED_EXTERNAL_PATHS: &[&str] = &[".device_key", ".security_audit.jsonl"];
+pub const PROTECTED_EXTERNAL_PATHS: &[&str] = &["localgpt.device.key", "localgpt.audit.jsonl"];
 
 /// Check if a workspace-relative filename is protected from agent writes.
 ///
@@ -155,8 +155,8 @@ mod tests {
         let hits = check_bash_command("echo 'new rules' > LocalGPT.md");
         assert!(hits.contains(&"LocalGPT.md"));
 
-        let hits = check_bash_command("cat .device_key");
-        assert!(hits.contains(&".device_key"));
+        let hits = check_bash_command("cat localgpt.device.key");
+        assert!(hits.contains(&"localgpt.device.key"));
 
         let hits = check_bash_command("ls -la");
         assert!(hits.is_empty());

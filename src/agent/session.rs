@@ -596,22 +596,13 @@ fn get_sessions_dir() -> Result<PathBuf> {
 }
 
 pub fn get_sessions_dir_for_agent(agent_id: &str) -> Result<PathBuf> {
-    let base = directories::BaseDirs::new()
-        .ok_or_else(|| anyhow::anyhow!("Could not determine home directory"))?;
-
-    Ok(base
-        .home_dir()
-        .join(".localgpt")
-        .join("agents")
-        .join(agent_id)
-        .join("sessions"))
+    let paths = crate::paths::Paths::resolve()?;
+    Ok(paths.sessions_dir(agent_id))
 }
 
 pub fn get_state_dir() -> Result<PathBuf> {
-    let base = directories::BaseDirs::new()
-        .ok_or_else(|| anyhow::anyhow!("Could not determine home directory"))?;
-
-    Ok(base.home_dir().join(".localgpt"))
+    let paths = crate::paths::Paths::resolve()?;
+    Ok(paths.state_dir)
 }
 
 fn estimate_tokens(text: &str) -> usize {

@@ -29,10 +29,7 @@ pub fn create_default_tools(
     memory: Option<Arc<MemoryManager>>,
 ) -> Result<Vec<Box<dyn Tool>>> {
     let workspace = config.workspace_path();
-    let state_dir = workspace
-        .parent()
-        .unwrap_or_else(|| std::path::Path::new("~/.localgpt"))
-        .to_path_buf();
+    let state_dir = config.paths.state_dir.clone();
 
     // Build sandbox policy if enabled
     let sandbox_policy = if config.sandbox.enabled {

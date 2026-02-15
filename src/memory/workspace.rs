@@ -9,16 +9,14 @@ use tracing::info;
 
 /// Initialize workspace with default templates if files don't exist.
 /// Returns true if this is a brand new workspace (all key files were missing).
-pub fn init_workspace(workspace: &Path) -> Result<bool> {
+pub fn init_workspace(workspace: &Path, paths: &crate::paths::Paths) -> Result<bool> {
     // Ensure directories exist
     fs::create_dir_all(workspace)?;
     fs::create_dir_all(workspace.join("memory"))?;
     fs::create_dir_all(workspace.join("skills"))?;
 
-    // Also init the parent state directory (.gitignore for sessions/logs)
-    if let Some(state_dir) = workspace.parent() {
-        init_state_dir(state_dir)?;
-    }
+    // Init state/data directories and ensure device key
+    init_state_dir(paths)?;
 
     // Check if this is a brand new workspace (all key files missing)
     let key_files = [
@@ -172,52 +170,15 @@ const GITIGNORE_TEMPLATE: &str = r#"# LocalGPT workspace .gitignore
 .DS_Store
 "#;
 
-/// Initialize state directory with .gitignore and device key
-pub fn init_state_dir(state_dir: &Path) -> Result<()> {
-    fs::create_dir_all(state_dir)?;
+/// Initialize state directory with .gitignore and device key.
+/// Ensures all XDG directories exist and device key is present.
+pub fn init_state_dir(paths: &crate::paths::Paths) -> Result<()> {
+    fs::create_dir_all(&paths.state_dir)?;
+    fs::create_dir_all(&paths.data_dir)?;
+    fs::create_dir_all(&paths.cache_dir)?;
 
-    let gitignore_path = state_dir.join(".gitignore");
-    if !gitignore_path.exists() {
-        fs::write(&gitignore_path, STATE_GITIGNORE_TEMPLATE)?;
-        info!("Created {}", gitignore_path.display());
-    }
-
-    // Ensure device key exists for security policy signing
-    crate::security::ensure_device_key(state_dir)?;
+    // Ensure device key exists for security policy signing (lives in data_dir)
+    crate::security::ensure_device_key(&paths.data_dir)?;
 
     Ok(())
 }
-
-const STATE_GITIGNORE_TEMPLATE: &str = r#"# LocalGPT state directory .gitignore
-
-# Session transcripts (large, ephemeral)
-agents/*/sessions/*.jsonl
-
-# Keep sessions.json (small metadata with CLI session IDs)
-!agents/*/sessions/sessions.json
-
-# Daemon PID file
-daemon.pid
-
-# Logs
-logs/
-
-# Memory index SQLite database (OpenClaw-compatible location)
-memory/*.sqlite
-memory/*.sqlite-wal
-memory/*.sqlite-shm
-
-# Database files (legacy)
-*.db
-*.db-wal
-*.db-shm
-
-# Config may contain API keys - be careful
-# config.toml
-
-# Temporary files
-*.tmp
-*.swp
-*~
-.DS_Store
-"#;

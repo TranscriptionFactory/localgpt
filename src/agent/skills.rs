@@ -211,9 +211,11 @@ pub fn load_skills(workspace: &Path) -> Result<Vec<Skill>> {
     Ok(skills)
 }
 
-/// Get the managed skills directory (~/.localgpt/skills/)
+/// Get the managed skills directory (data_dir/skills)
 fn get_managed_skills_dir() -> Option<PathBuf> {
-    directories::BaseDirs::new().map(|dirs| dirs.home_dir().join(".localgpt").join("skills"))
+    crate::paths::Paths::resolve()
+        .ok()
+        .map(|paths| paths.managed_skills_dir())
 }
 
 /// Load skills from a single directory

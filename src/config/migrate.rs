@@ -115,8 +115,8 @@ fn convert_openclaw_config(oc: OpenClawConfig) -> Config {
         && let Some(defaults) = agents.defaults
     {
         if let Some(workspace) = defaults.workspace {
-            // Convert OpenClaw workspace path to LocalGPT format
-            let workspace = workspace.replace("~/.openclaw/", "~/.localgpt/");
+            // Convert OpenClaw workspace path to LocalGPT XDG format
+            let workspace = workspace.replace("~/.openclaw/", "~/.local/share/localgpt/");
             config.memory.workspace = workspace;
         }
 

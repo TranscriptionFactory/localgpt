@@ -98,15 +98,14 @@ impl Agent {
 
         // Load and verify security policy
         let workspace = app_config.workspace_path();
-        let state_dir = workspace
-            .parent()
-            .unwrap_or_else(|| std::path::Path::new("~/.localgpt"));
+        let data_dir = &app_config.paths.data_dir;
+        let state_dir = &app_config.paths.state_dir;
 
         let verified_security_policy = if app_config.security.disable_policy {
             debug!("Security policy loading disabled by config");
             None
         } else {
-            match crate::security::load_and_verify_policy(&workspace, state_dir) {
+            match crate::security::load_and_verify_policy(&workspace, data_dir) {
                 crate::security::PolicyVerification::Valid(content) => {
                     let sha = crate::security::content_sha256(&content);
                     let _ = crate::security::append_audit_entry(
@@ -220,13 +219,11 @@ impl Agent {
 
         // Load security policy
         let workspace = app_config.workspace_path();
-        let state_dir = workspace
-            .parent()
-            .unwrap_or_else(|| std::path::Path::new("~/.localgpt"));
+        let data_dir = &app_config.paths.data_dir;
         let verified_security_policy = if app_config.security.disable_policy {
             None
         } else {
-            match crate::security::load_and_verify_policy(&workspace, state_dir) {
+            match crate::security::load_and_verify_policy(&workspace, data_dir) {
                 crate::security::PolicyVerification::Valid(content) => Some(content),
                 _ => None,
             }

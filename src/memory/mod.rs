@@ -75,19 +75,23 @@ impl MemoryManager {
         app_config: Option<&Config>,
         agent_id: &str,
     ) -> Result<Self> {
-        let workspace = shellexpand::tilde(&memory_config.workspace).to_string();
-        let workspace = PathBuf::from(workspace);
+        // Use paths from app_config if available, otherwise resolve fresh
+        let paths = if let Some(config) = app_config {
+            config.paths.clone()
+        } else {
+            crate::paths::Paths::resolve()?
+        };
+
+        let workspace = paths.workspace.clone();
 
         // Initialize workspace with templates if needed, returns true if brand new
-        let is_brand_new = init_workspace(&workspace)?;
+        let is_brand_new = init_workspace(&workspace, &paths)?;
 
-        // Database goes in state_dir/memory/{agentId}.sqlite (OpenClaw-compatible)
-        let state_dir = workspace
-            .parent()
-            .ok_or_else(|| anyhow::anyhow!("Workspace has no parent directory"))?;
-        let memory_dir = state_dir.join("memory");
-        std::fs::create_dir_all(&memory_dir)?;
-        let db_path = memory_dir.join(format!("{}.sqlite", agent_id));
+        // Database goes in cache_dir/memory/{agentId}.sqlite (XDG cache — regenerable)
+        let db_path = paths.search_index(agent_id);
+        if let Some(parent) = db_path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
 
         let index = MemoryIndex::new_with_db_path(&workspace, &db_path)?
             .with_chunk_config(memory_config.chunk_size, memory_config.chunk_overlap);
