@@ -2,9 +2,31 @@
 
 All notable changes to LocalGPT are documented in this file.
 
-## [Unreleased]
+## [0.2.0] - 2026-02-14
 
-No unreleased changes.
+A milestone release introducing LocalGPT Gen for 3D scene generation, XDG Base Directory compliance, Docker Compose support, and workspace restructuring.
+
+### Added
+
+- **LocalGPT Gen** — a new `localgpt-gen` subcrate for AI-driven 3D scene generation (Phase 1+2). ([55aa127](https://github.com/localgpt-app/localgpt/commit/55aa127))
+- **Secure Docker Compose setup** for running LocalGPT in containers. ([#2](https://github.com/localgpt-app/localgpt/pull/2))
+- **XDG Base Directory layout** for all paths, following platform conventions on Linux, macOS, and Windows. ([#18](https://github.com/localgpt-app/localgpt/issues/18))
+- **Local server config guidance** for OpenAI-compatible server setups. ([#25](https://github.com/localgpt-app/localgpt/pull/25))
+- Security section added to README covering sandbox, signed policy, and injection defenses.
+
+### Changed
+
+- Extracted `localgpt-gen` into its own workspace member and bumped to v0.2.0.
+- Replaced OpenClaw auto-migration with a detection notice (no longer silently migrates config).
+- Configured cargo-release for joint crates.io publishing.
+
+### Fixed
+
+- Added glibc compatibility shim for `ort-sys` on glibc < 2.38 (fixes builds on older Linux distros).
+
+### Contributors
+
+Thanks to **[@ttulttul](https://github.com/ttulttul)** (Ken Simpson) for the secure Docker Compose setup, and **[@cnaples79](https://github.com/cnaples79)** (Chase Naples) for documenting local server configuration!
 
 ## [0.1.3] - 2026-02-12
 
@@ -92,7 +114,8 @@ Initial release of LocalGPT — a local-only AI assistant with persistent markdo
 - **Zero-config startup** defaulting to `claude-cli/opus`.
 - **Auto-migration** from OpenClaw config if present.
 
-[Unreleased]: https://github.com/localgpt-app/localgpt/compare/v0.1.3...HEAD
+[Unreleased]: https://github.com/localgpt-app/localgpt/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/localgpt-app/localgpt/compare/v0.1.3...v0.2.0
 [0.1.3]: https://github.com/localgpt-app/localgpt/compare/v0.1.2...v0.1.3
 [0.1.2]: https://github.com/localgpt-app/localgpt/compare/v0.1.1...v0.1.2
 [0.1.1]: https://github.com/localgpt-app/localgpt/compare/v0.1.0...v0.1.1
