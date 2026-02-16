@@ -62,6 +62,12 @@ const config: Config = {
         },
         {to: '/blog', label: 'Blog', position: 'left'},
         {
+          href: 'https://www.youtube.com/@localgpt-gen',
+          position: 'right',
+          className: 'header-youtube-link',
+          'aria-label': 'YouTube',
+        },
+        {
           href: 'https://x.com/localgpt',
           position: 'right',
           className: 'header-x-link',
@@ -118,6 +124,10 @@ const config: Config = {
             {
               label: 'Blog',
               to: '/blog',
+            },
+            {
+              label: 'YouTube',
+              href: 'https://www.youtube.com/@localgpt-gen',
             },
             {
               label: 'X (Twitter)',
