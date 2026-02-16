@@ -1,3 +1,5 @@
+pub mod web_search;
+
 use anyhow::Result;
 use async_trait::async_trait;
 use serde_json::{Value, json};
@@ -7,9 +9,11 @@ use std::sync::Arc;
 use tracing::debug;
 
 use super::providers::ToolSchema;
-use crate::config::Config;
+use crate::config::{Config, SearchProviderType};
 use crate::memory::MemoryManager;
 use crate::sandbox::{self, SandboxPolicy};
+
+use web_search::{SearchRouter, WebSearchTool};
 
 #[derive(Debug, Clone)]
 pub struct ToolResult {
@@ -60,7 +64,7 @@ pub fn create_default_tools(
         Box::new(MemorySearchTool::new(workspace.clone()))
     };
 
-    Ok(vec![
+    let mut tools: Vec<Box<dyn Tool>> = vec![
         Box::new(BashTool::new(
             config.tools.bash_timeout_ms,
             state_dir.clone(),
@@ -75,7 +79,19 @@ pub fn create_default_tools(
         memory_search_tool,
         Box::new(MemoryGetTool::new(workspace)),
         Box::new(WebFetchTool::new(config.tools.web_fetch_max_bytes)),
-    ])
+    ];
+
+    // Conditionally add web search tool
+    if let Some(ref ws_config) = config.tools.web_search
+        && !matches!(ws_config.provider, SearchProviderType::None)
+    {
+        match SearchRouter::from_config(ws_config) {
+            Ok(router) => tools.push(Box::new(WebSearchTool::new(Arc::new(router)))),
+            Err(e) => tracing::warn!("Web search init failed: {e}"),
+        }
+    }
+
+    Ok(tools)
 }
 
 // Bash Tool
@@ -905,6 +921,10 @@ pub fn extract_tool_detail(tool_name: &str, arguments: &str) -> Option<String> {
             .get("url")
             .and_then(|v| v.as_str())
             .map(|s| s.to_string()),
+        "web_search" => args
+            .get("query")
+            .and_then(|v| v.as_str())
+            .map(|s| format!("\"{}\"", s)),
         _ => None,
     }
 }

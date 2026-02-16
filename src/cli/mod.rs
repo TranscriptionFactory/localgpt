@@ -10,6 +10,7 @@ pub mod md;
 pub mod memory;
 pub mod paths;
 pub mod sandbox;
+pub mod search;
 
 use clap::{Parser, Subcommand};
 
@@ -73,4 +74,7 @@ pub enum Commands {
 
     /// Shell sandbox management
     Sandbox(sandbox::SandboxArgs),
+
+    /// Test and manage web search
+    Search(search::SearchArgs),
 }

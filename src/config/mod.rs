@@ -90,6 +90,67 @@ pub struct ToolsConfig {
     /// Wrap tool outputs and memory content with XML-style delimiters
     #[serde(default = "default_true")]
     pub use_content_delimiters: bool,
+
+    /// Web search configuration (disabled by default)
+    #[serde(default)]
+    pub web_search: Option<WebSearchConfig>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum SearchProviderType {
+    Searxng,
+    Brave,
+    #[default]
+    None,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WebSearchConfig {
+    #[serde(default)]
+    pub provider: SearchProviderType,
+
+    #[serde(default = "default_true")]
+    pub cache_enabled: bool,
+
+    /// Cache TTL in seconds (default: 900 = 15 minutes)
+    #[serde(default = "default_cache_ttl")]
+    pub cache_ttl: u64,
+
+    /// Maximum results per query (1-10, default: 5)
+    #[serde(default = "default_max_results")]
+    pub max_results: u8,
+
+    #[serde(default)]
+    pub searxng: Option<SearxngConfig>,
+
+    #[serde(default)]
+    pub brave: Option<BraveConfig>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SearxngConfig {
+    pub base_url: String,
+
+    #[serde(default)]
+    pub categories: String,
+
+    #[serde(default)]
+    pub language: String,
+
+    #[serde(default)]
+    pub time_range: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BraveConfig {
+    pub api_key: String,
+
+    #[serde(default)]
+    pub country: String,
+
+    #[serde(default)]
+    pub freshness: String,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -458,6 +519,12 @@ fn default_sandbox_max_processes() -> u32 {
 fn default_sandbox_network_policy() -> String {
     "deny".to_string()
 }
+fn default_cache_ttl() -> u64 {
+    900 // 15 minutes
+}
+fn default_max_results() -> u8 {
+    5
+}
 
 impl Default for AgentConfig {
     fn default() -> Self {
@@ -479,6 +546,7 @@ impl Default for ToolsConfig {
             tool_output_max_chars: default_tool_output_max_chars(),
             log_injection_warnings: default_true(),
             use_content_delimiters: default_true(),
+            web_search: None,
         }
     }
 }
@@ -611,6 +679,11 @@ impl Config {
         if let Some(ref mut telegram) = self.telegram {
             telegram.api_token = expand_env(&telegram.api_token);
         }
+        if let Some(ref mut ws) = self.tools.web_search
+            && let Some(ref mut brave) = ws.brave
+        {
+            brave.api_key = expand_env(&brave.api_key);
+        }
     }
 
     pub fn get_value(&self, key: &str) -> Result<String> {
@@ -737,6 +810,21 @@ level = "info"
 #
 # [sandbox.network]
 # policy = "deny"                       # deny | proxy
+
+# Web search (optional)
+# [tools.web_search]
+# provider = "searxng"            # searxng | brave | none
+# cache_enabled = true
+# cache_ttl = 900                 # seconds (default: 15 min)
+# max_results = 5                 # 1-10
+#
+# [tools.web_search.searxng]
+# base_url = "http://localhost:8080"
+# categories = "general"
+# language = "en"
+#
+# [tools.web_search.brave]
+# api_key = "${BRAVE_API_KEY}"
 
 # Telegram bot (optional)
 # [telegram]

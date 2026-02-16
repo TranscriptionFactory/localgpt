@@ -76,5 +76,6 @@ async fn async_main(cli: Cli) -> Result<()> {
         Commands::Paths => localgpt::cli::paths::run(),
         Commands::Md(args) => localgpt::cli::md::run(args).await,
         Commands::Sandbox(args) => localgpt::cli::sandbox::run(args).await,
+        Commands::Search(args) => localgpt::cli::search::run(args).await,
     }
 }
