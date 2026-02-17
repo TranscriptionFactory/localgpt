@@ -1,7 +1,7 @@
 use anyhow::Result;
 use clap::{Args, Subcommand};
 
-use localgpt_core::agent::tools::web_search::SearchRouter;
+use localgpt_core::agent::tools::web_search::{SearchRouter, read_search_usage_stats};
 use localgpt_core::config::Config;
 
 #[derive(Args)]
@@ -17,11 +17,14 @@ pub enum SearchCommands {
         /// The search query to test
         query: String,
     },
+    /// Show cumulative web search usage statistics
+    Stats,
 }
 
 pub async fn run(args: SearchArgs) -> Result<()> {
     match args.command {
         SearchCommands::Test { query } => run_test(&query).await,
+        SearchCommands::Stats => run_stats(),
     }
 }
 
@@ -58,6 +61,23 @@ async fn run_test(query: &str) -> Result<()> {
     if response.results.is_empty() {
         println!("No results found.");
     }
+
+    Ok(())
+}
+
+fn run_stats() -> Result<()> {
+    let stats = read_search_usage_stats()?;
+    let cache_pct = if stats.total_queries > 0 {
+        (stats.cached_hits as f64 / stats.total_queries as f64) * 100.0
+    } else {
+        0.0
+    };
+
+    println!("Search Statistics (since {}):", stats.since);
+    println!("  Provider: {}", stats.provider);
+    println!("  Total queries: {}", stats.total_queries);
+    println!("  Cached hits: {} ({:.0}%)", stats.cached_hits, cache_pct);
+    println!("  Estimated cost: ${:.3}", stats.estimated_cost_usd);
 
     Ok(())
 }

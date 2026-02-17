@@ -794,6 +794,18 @@ async fn handle_command(
                     status.api_input_tokens + status.api_output_tokens
                 );
             }
+
+            if status.search_queries > 0 {
+                let cache_pct =
+                    (status.search_cached_hits as f64 / status.search_queries as f64) * 100.0;
+                println!("\nSearch:");
+                println!("  Queries: {}", status.search_queries);
+                println!(
+                    "  Cached hits: {} ({:.0}%)",
+                    status.search_cached_hits, cache_pct
+                );
+                println!("  Estimated cost: ${:.3}", status.search_cost_usd);
+            }
             println!();
             CommandResult::Continue
         }

@@ -101,6 +101,8 @@ pub struct ToolsConfig {
 pub enum SearchProviderType {
     Searxng,
     Brave,
+    Tavily,
+    Perplexity,
     #[default]
     None,
 }
@@ -121,11 +123,21 @@ pub struct WebSearchConfig {
     #[serde(default = "default_max_results")]
     pub max_results: u8,
 
+    /// Prefer provider-native search when supported (e.g., Anthropic web_search tool)
+    #[serde(default = "default_true")]
+    pub prefer_native: bool,
+
     #[serde(default)]
     pub searxng: Option<SearxngConfig>,
 
     #[serde(default)]
     pub brave: Option<BraveConfig>,
+
+    #[serde(default)]
+    pub tavily: Option<TavilyConfig>,
+
+    #[serde(default)]
+    pub perplexity: Option<PerplexityConfig>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -151,6 +163,25 @@ pub struct BraveConfig {
 
     #[serde(default)]
     pub freshness: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TavilyConfig {
+    pub api_key: String,
+
+    #[serde(default = "default_basic")]
+    pub search_depth: String,
+
+    #[serde(default = "default_true")]
+    pub include_answer: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PerplexityConfig {
+    pub api_key: String,
+
+    #[serde(default = "default_sonar")]
+    pub model: String,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -254,6 +285,9 @@ pub struct ProvidersConfig {
     pub openai: Option<OpenAIConfig>,
 
     #[serde(default)]
+    pub xai: Option<XaiConfig>,
+
+    #[serde(default)]
     pub anthropic: Option<AnthropicConfig>,
 
     #[serde(default)]
@@ -271,6 +305,14 @@ pub struct OpenAIConfig {
     pub api_key: String,
 
     #[serde(default = "default_openai_base_url")]
+    pub base_url: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct XaiConfig {
+    pub api_key: String,
+
+    #[serde(default = "default_xai_base_url")]
     pub base_url: String,
 }
 
@@ -435,6 +477,9 @@ fn default_tool_output_max_chars() -> usize {
 fn default_openai_base_url() -> String {
     "https://api.openai.com/v1".to_string()
 }
+fn default_xai_base_url() -> String {
+    "https://api.x.ai/v1".to_string()
+}
 fn default_anthropic_base_url() -> String {
     "https://api.anthropic.com".to_string()
 }
@@ -524,6 +569,12 @@ fn default_cache_ttl() -> u64 {
 }
 fn default_max_results() -> u8 {
     5
+}
+fn default_basic() -> String {
+    "basic".to_string()
+}
+fn default_sonar() -> String {
+    "sonar".to_string()
 }
 
 impl Default for AgentConfig {
@@ -697,6 +748,9 @@ impl Config {
         if let Some(ref mut openai) = self.providers.openai {
             openai.api_key = expand_env(&openai.api_key);
         }
+        if let Some(ref mut xai) = self.providers.xai {
+            xai.api_key = expand_env(&xai.api_key);
+        }
         if let Some(ref mut anthropic) = self.providers.anthropic {
             anthropic.api_key = expand_env(&anthropic.api_key);
         }
@@ -707,6 +761,16 @@ impl Config {
             && let Some(ref mut brave) = ws.brave
         {
             brave.api_key = expand_env(&brave.api_key);
+        }
+        if let Some(ref mut ws) = self.tools.web_search
+            && let Some(ref mut tavily) = ws.tavily
+        {
+            tavily.api_key = expand_env(&tavily.api_key);
+        }
+        if let Some(ref mut ws) = self.tools.web_search
+            && let Some(ref mut perplexity) = ws.perplexity
+        {
+            perplexity.api_key = expand_env(&perplexity.api_key);
         }
     }
 
@@ -775,7 +839,7 @@ const DEFAULT_CONFIG_TEMPLATE: &str = r#"# LocalGPT Configuration
 # Auto-created on first run. Edit as needed.
 
 [agent]
-# Default model: claude-cli/opus, anthropic/claude-sonnet-4-5, openai/gpt-4o, etc.
+# Default model: claude-cli/opus, anthropic/claude-sonnet-4-5, openai/gpt-4o, xai/grok-3-mini, etc.
 default_model = "claude-cli/opus"
 context_window = 128000
 reserve_tokens = 8000
@@ -787,6 +851,11 @@ reserve_tokens = 8000
 # OpenAI API (for openai/* models)
 # [providers.openai]
 # api_key = "${OPENAI_API_KEY}"
+
+# xAI API (for xai/* models)
+# [providers.xai]
+# api_key = "${XAI_API_KEY}"
+# base_url = "https://api.x.ai/v1"
 
 # Claude CLI (for claude-cli/* models, requires claude CLI installed)
 [providers.claude_cli]
@@ -837,10 +906,11 @@ level = "info"
 
 # Web search (optional)
 # [tools.web_search]
-# provider = "searxng"            # searxng | brave | none
+# provider = "searxng"            # searxng | brave | tavily | perplexity | none
 # cache_enabled = true
 # cache_ttl = 900                 # seconds (default: 15 min)
 # max_results = 5                 # 1-10
+# prefer_native = true            # prefer native provider search when available
 #
 # [tools.web_search.searxng]
 # base_url = "http://localhost:8080"
@@ -849,6 +919,15 @@ level = "info"
 #
 # [tools.web_search.brave]
 # api_key = "${BRAVE_API_KEY}"
+#
+# [tools.web_search.tavily]
+# api_key = "${TAVILY_API_KEY}"
+# search_depth = "basic"          # basic | advanced
+# include_answer = true
+#
+# [tools.web_search.perplexity]
+# api_key = "${PERPLEXITY_API_KEY}"
+# model = "sonar"
 
 # Telegram bot (optional)
 # [telegram]

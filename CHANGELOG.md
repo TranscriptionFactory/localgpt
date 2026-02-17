@@ -2,6 +2,19 @@
 
 All notable changes to LocalGPT are documented in this file.
 
+## [Unreleased]
+
+### Added
+
+- **Hybrid web search support** with configurable providers (`searxng`, `brave`, `tavily`, `perplexity`) and native-search passthrough controls.
+- **xAI provider support** (`xai/*`, `grok-*`) with native `web_search` tool passthrough.
+- **Web search docs and CLI surfaces**: `localgpt search test`, `localgpt search stats`, and a dedicated `docs/web-search.md` guide.
+
+### Changed
+
+- **`web_fetch` extraction upgraded** to use the `readability` crate with fallback text sanitization.
+- **Config templates expanded** with `providers.xai` and full `[tools.web_search]` examples in both default and example config files.
+
 ## [0.2.0] - 2026-02-14
 
 A milestone release introducing LocalGPT Gen for 3D scene generation, XDG Base Directory compliance, Docker Compose support, and workspace restructuring.
