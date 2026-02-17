@@ -52,17 +52,14 @@ pub fn create_safe_tools(
         Box::new(MemorySearchTool::new(workspace.clone()))
     };
 
-    // Compile web_fetch filter with SSRF deny patterns
+    // Compile web_fetch filter from user config (SSRF protection is handled
+    // by validate_web_fetch_url() which does DNS-resolution-based IP checking)
     let web_fetch_filter = config
         .tools
         .filters
         .get("web_fetch")
         .map(CompiledToolFilter::compile)
-        .unwrap_or_else(|| Ok(CompiledToolFilter::permissive()))?
-        .merge_hardcoded(
-            hardcoded_filters::WEB_FETCH_DENY_SUBSTRINGS,
-            hardcoded_filters::WEB_FETCH_DENY_PATTERNS,
-        )?;
+        .unwrap_or_else(|| Ok(CompiledToolFilter::permissive()))?;
 
     let mut tools: Vec<Box<dyn Tool>> = vec![
         memory_search_tool,
