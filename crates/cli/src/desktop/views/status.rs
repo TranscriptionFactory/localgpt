@@ -84,21 +84,6 @@ impl StatusView {
                     ));
                 });
             }
-
-            if status.search_queries > 0 {
-                ui.add_space(10.0);
-                ui.group(|ui| {
-                    ui.label(RichText::new("Web Search (Session)").strong());
-                    ui.label(format!("Queries: {}", status.search_queries));
-                    let cache_pct =
-                        (status.search_cached_hits as f32 / status.search_queries as f32) * 100.0;
-                    ui.label(format!(
-                        "Cached: {} ({:.0}%)",
-                        status.search_cached_hits, cache_pct
-                    ));
-                    ui.label(format!("Estimated cost: ${:.3}", status.search_cost_usd));
-                });
-            }
         }
 
         message_to_send

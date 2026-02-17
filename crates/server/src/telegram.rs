@@ -290,7 +290,7 @@ async fn handle_command(
             let status_text = if let Some(entry) = sessions.get(&chat_id.0) {
                 let status = entry.agent.session_status();
                 let (used, usable, total) = entry.agent.context_usage();
-                let mut text = format!(
+                format!(
                     "Session active\n\
                      Model: {}\n\
                      Messages: {}\n\
@@ -304,19 +304,7 @@ async fn handle_command(
                     total,
                     status.compaction_count,
                     entry.last_accessed.elapsed().as_secs()
-                );
-                if status.search_queries > 0 {
-                    let cache_pct =
-                        (status.search_cached_hits as f64 / status.search_queries as f64) * 100.0;
-                    text.push_str(&format!(
-                        "\nSearch: {} queries ({} cached, {:.0}%) · ${:.3}",
-                        status.search_queries,
-                        status.search_cached_hits,
-                        cache_pct,
-                        status.search_cost_usd
-                    ));
-                }
-                text
+                )
             } else {
                 "No active session. Send a message to start one.".to_string()
             };

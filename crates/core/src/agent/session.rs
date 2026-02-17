@@ -120,9 +120,6 @@ pub struct SessionStatus {
     pub compaction_count: u32,
     pub api_input_tokens: u64,
     pub api_output_tokens: u64,
-    pub search_queries: u64,
-    pub search_cached_hits: u64,
-    pub search_cost_usd: f64,
 }
 
 impl Session {
@@ -562,20 +559,10 @@ impl Session {
             compaction_count: self.compaction_count,
             api_input_tokens: 0,
             api_output_tokens: 0,
-            search_queries: 0,
-            search_cached_hits: 0,
-            search_cost_usd: 0.0,
         }
     }
 
-    pub fn status_with_usage(
-        &self,
-        input_tokens: u64,
-        output_tokens: u64,
-        search_queries: u64,
-        search_cached_hits: u64,
-        search_cost_usd: f64,
-    ) -> SessionStatus {
+    pub fn status_with_usage(&self, input_tokens: u64, output_tokens: u64) -> SessionStatus {
         SessionStatus {
             id: self.id.clone(),
             message_count: self.messages.len(),
@@ -583,9 +570,6 @@ impl Session {
             compaction_count: self.compaction_count,
             api_input_tokens: input_tokens,
             api_output_tokens: output_tokens,
-            search_queries,
-            search_cached_hits,
-            search_cost_usd,
         }
     }
 

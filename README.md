@@ -10,11 +10,10 @@ A local device focused AI assistant built in Rust — persistent memory, autonom
 - **Single binary** — no Node.js, Docker, or Python required
 - **Local device focused** — runs entirely on your machine, your memory data stays yours
 - **Persistent memory** — markdown-based knowledge store with full-text and semantic search
-- **Hybrid web search** — native provider search passthrough plus client-side fallback providers
 - **Autonomous heartbeat** — delegate tasks and let it work in the background
 - **Multiple interfaces** — CLI, web UI, desktop GUI, Telegram bot
 - **Defense-in-depth security** — signed policy files, kernel-enforced sandbox, prompt injection defenses
-- **Multiple LLM providers** — Anthropic (Claude), OpenAI, xAI (Grok), Ollama, GLM (Z.AI)
+- **Multiple LLM providers** — Anthropic (Claude), OpenAI, Ollama, GLM (Z.AI)
 - **OpenClaw compatible** — works with SOUL, MEMORY, HEARTBEAT markdown files and skills format
 
 ## Install
@@ -103,17 +102,6 @@ If you run a local server that speaks the OpenAI API (e.g., LM Studio, llamafile
 3. Run `localgpt chat` (or `localgpt daemon start`) and requests will go to your local server.
 
 Tip: If you see `Failed to spawn Claude CLI`, change `agent.default_model` away from `claude-cli/*` or install the `claude` CLI.
-
-### Web Search
-
-Configure web search providers under `[tools.web_search]` and validate with:
-
-```bash
-localgpt search test "rust async runtime"
-localgpt search stats
-```
-
-Full setup guide: [`docs/web-search.md`](docs/web-search.md)
 
 ## Telegram Bot
 
@@ -205,10 +193,6 @@ localgpt daemon heartbeat         # Run one heartbeat cycle
 localgpt memory search "query"    # Search memory
 localgpt memory reindex           # Reindex files
 localgpt memory stats             # Show statistics
-
-# Web search
-localgpt search test "query"      # Validate search provider config
-localgpt search stats             # Show cumulative search usage/cost
 
 # Security
 localgpt md sign                  # Sign LocalGPT.md policy

@@ -37,7 +37,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use tracing::{debug, info};
 
-use crate::config::{Config, SearchProviderType};
+use crate::config::Config;
 use crate::memory::{MemoryChunk, MemoryManager};
 
 /// Soft threshold buffer before compaction (tokens)
@@ -83,10 +83,6 @@ pub struct Agent {
     tools: Vec<Box<dyn Tool>>,
     /// Cumulative token usage for this session
     cumulative_usage: Usage,
-    /// Search tool stats for this session
-    search_queries: u64,
-    search_cached_hits: u64,
-    search_cost_usd: f64,
     /// Verified security policy content (None if missing, unsigned, or tampered)
     verified_security_policy: Option<String>,
 }
@@ -206,9 +202,6 @@ impl Agent {
             memory,
             tools,
             cumulative_usage: Usage::default(),
-            search_queries: 0,
-            search_cached_hits: 0,
-            search_cost_usd: 0.0,
             verified_security_policy,
         })
     }
@@ -247,9 +240,6 @@ impl Agent {
             memory,
             tools,
             cumulative_usage: Usage::default(),
-            search_queries: 0,
-            search_cached_hits: 0,
-            search_cost_usd: 0.0,
             verified_security_policy,
         })
     }
@@ -347,64 +337,6 @@ impl Agent {
         }
     }
 
-    fn use_native_web_search(&self) -> bool {
-        self.app_config
-            .tools
-            .web_search
-            .as_ref()
-            .map(|ws| ws.prefer_native)
-            .unwrap_or(true)
-            && self.provider.supports_native_search()
-    }
-
-    fn include_tool_for_provider(&self, tool_name: &str) -> bool {
-        !(self.use_native_web_search() && tool_name == "web_search")
-    }
-
-    fn tool_names_for_provider(&self) -> Vec<&str> {
-        self.tools
-            .iter()
-            .filter(|tool| self.include_tool_for_provider(tool.name()))
-            .map(|tool| tool.name())
-            .collect()
-    }
-
-    fn tool_schemas_for_provider(&self) -> Vec<ToolSchema> {
-        self.tools
-            .iter()
-            .filter(|tool| self.include_tool_for_provider(tool.name()))
-            .map(|tool| tool.schema())
-            .collect()
-    }
-
-    fn configured_search_cost_usd(&self) -> f64 {
-        let provider = self
-            .app_config
-            .tools
-            .web_search
-            .as_ref()
-            .map(|ws| &ws.provider)
-            .unwrap_or(&SearchProviderType::None);
-
-        match provider {
-            SearchProviderType::Searxng => 0.0,
-            SearchProviderType::Brave => 0.005,
-            SearchProviderType::Tavily => 0.005,
-            SearchProviderType::Perplexity => 0.003,
-            SearchProviderType::None => 0.0,
-        }
-    }
-
-    fn track_web_search_usage(&mut self, raw_output: &str) {
-        self.search_queries += 1;
-        let cached = raw_output.contains(" | cached");
-        if cached {
-            self.search_cached_hits += 1;
-        } else {
-            self.search_cost_usd += self.configured_search_cost_usd();
-        }
-    }
-
     /// Build the message array for an LLM API call, with the security
     /// block injected as a trailing user message on every call.
     ///
@@ -440,9 +372,6 @@ impl Agent {
 
     pub async fn new_session(&mut self) -> Result<()> {
         self.session = Session::new();
-        self.search_queries = 0;
-        self.search_cached_hits = 0;
-        self.search_cost_usd = 0.0;
 
         // Reset provider session state (e.g., clear Claude CLI session ID)
         self.provider.reset_session();
@@ -453,7 +382,7 @@ impl Agent {
         debug!("Loaded {} skills from workspace", workspace_skills.len());
 
         // Build system prompt with identity, safety, workspace info
-        let tool_names = self.tool_names_for_provider();
+        let tool_names: Vec<&str> = self.tools.iter().map(|t| t.name()).collect();
         let system_prompt_params =
             system_prompt::SystemPromptParams::new(self.memory.workspace(), &self.config.model)
                 .with_tools(tool_names)
@@ -518,7 +447,7 @@ impl Agent {
         let messages = self.messages_for_api_call();
 
         // Get available tools
-        let tool_schemas = self.tool_schemas_for_provider();
+        let tool_schemas: Vec<ToolSchema> = self.tools.iter().map(|t| t.schema()).collect();
 
         // Invoke LLM
         let response = self
@@ -590,7 +519,7 @@ impl Agent {
 
                 // Continue conversation with tool results (with per-turn security block)
                 let messages = self.messages_for_api_call();
-                let tool_schemas = self.tool_schemas_for_provider();
+                let tool_schemas: Vec<ToolSchema> = self.tools.iter().map(|t| t.schema()).collect();
                 let next_response = self
                     .provider
                     .chat(&messages, Some(tool_schemas.as_slice()))
@@ -602,42 +531,36 @@ impl Agent {
         }
     }
 
-    async fn execute_tool(&mut self, call: &ToolCall) -> Result<(String, Vec<String>)> {
-        let raw_output = {
-            let tool = self
-                .tools
-                .iter()
-                .find(|tool| tool.name() == call.name)
-                .ok_or_else(|| anyhow::anyhow!("Unknown tool: {}", call.name))?;
-            tool.execute(&call.arguments).await?
-        };
+    async fn execute_tool(&self, call: &ToolCall) -> Result<(String, Vec<String>)> {
+        for tool in &self.tools {
+            if tool.name() == call.name {
+                let raw_output = tool.execute(&call.arguments).await?;
 
-        if call.name == "web_search" {
-            self.track_web_search_usage(&raw_output);
-        }
+                // Apply sanitization if configured
+                if self.app_config.tools.use_content_delimiters {
+                    let max_chars = if self.app_config.tools.tool_output_max_chars > 0 {
+                        Some(self.app_config.tools.tool_output_max_chars)
+                    } else {
+                        None
+                    };
+                    let result = sanitize::wrap_tool_output(&call.name, &raw_output, max_chars);
 
-        // Apply sanitization if configured
-        if self.app_config.tools.use_content_delimiters {
-            let max_chars = if self.app_config.tools.tool_output_max_chars > 0 {
-                Some(self.app_config.tools.tool_output_max_chars)
-            } else {
-                None
-            };
-            let result = sanitize::wrap_tool_output(&call.name, &raw_output, max_chars);
+                    // Log warnings for suspicious patterns
+                    if self.app_config.tools.log_injection_warnings && !result.warnings.is_empty() {
+                        tracing::warn!(
+                            "Suspicious patterns detected in {} output: {:?}",
+                            call.name,
+                            result.warnings
+                        );
+                    }
 
-            // Log warnings for suspicious patterns
-            if self.app_config.tools.log_injection_warnings && !result.warnings.is_empty() {
-                tracing::warn!(
-                    "Suspicious patterns detected in {} output: {:?}",
-                    call.name,
-                    result.warnings
-                );
+                    return Ok((result.content, result.warnings));
+                }
+
+                return Ok((raw_output, Vec::new()));
             }
-
-            return Ok((result.content, result.warnings));
         }
-
-        Ok((raw_output, Vec::new()))
+        anyhow::bail!("Unknown tool: {}", call.name)
     }
 
     async fn build_memory_context(&self) -> Result<String> {
@@ -846,7 +769,7 @@ impl Agent {
         });
 
         // Get tool schemas so agent can write files
-        let tool_schemas = self.tool_schemas_for_provider();
+        let tool_schemas: Vec<ToolSchema> = self.tools.iter().map(|t| t.schema()).collect();
         let messages = self.messages_for_api_call();
 
         let response = self.provider.chat(&messages, Some(&tool_schemas)).await?;
@@ -958,9 +881,6 @@ impl Agent {
 
     pub fn clear_session(&mut self) {
         self.session = Session::new();
-        self.search_queries = 0;
-        self.search_cached_hits = 0;
-        self.search_cost_usd = 0.0;
         self.provider.reset_session();
     }
 
@@ -990,9 +910,6 @@ impl Agent {
         self.session.status_with_usage(
             self.cumulative_usage.input_tokens,
             self.cumulative_usage.output_tokens,
-            self.search_queries,
-            self.search_cached_hits,
-            self.search_cost_usd,
         )
     }
 
@@ -1033,7 +950,7 @@ impl Agent {
         let messages = self.messages_for_api_call();
 
         // Get tool schemas so the model knows the correct tool call format
-        let tool_schemas = self.tool_schemas_for_provider();
+        let tool_schemas: Vec<ToolSchema> = self.tools.iter().map(|t| t.schema()).collect();
 
         // Get stream from provider with tools
         self.provider
@@ -1104,7 +1021,7 @@ impl Agent {
 
         // Get follow-up response from LLM (with per-turn security block)
         let messages = self.messages_for_api_call();
-        let tool_schemas = self.tool_schemas_for_provider();
+        let tool_schemas: Vec<ToolSchema> = self.tools.iter().map(|t| t.schema()).collect();
         let response = self
             .provider
             .chat(&messages, Some(tool_schemas.as_slice()))
@@ -1205,7 +1122,7 @@ impl Agent {
                 }
 
                 // Get tool schemas
-                let tool_schemas = self.tool_schemas_for_provider();
+                let tool_schemas: Vec<ToolSchema> = self.tools.iter().map(|t| t.schema()).collect();
 
                 // Build messages for LLM (with per-turn security block)
                 let messages = self.messages_for_api_call();
@@ -1295,7 +1212,7 @@ impl Agent {
 
     /// Get tool schemas for external use
     pub fn tool_schemas(&self) -> Vec<ToolSchema> {
-        self.tool_schemas_for_provider()
+        self.tools.iter().map(|t| t.schema()).collect()
     }
 
     /// Auto-save session to disk (call after each message)

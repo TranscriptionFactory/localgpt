@@ -18,9 +18,6 @@
 # OpenAI API (requires OPENAI_API_KEY):
 #   - "openai/gpt-4o", "openai/gpt-4o-mini", "openai/gpt-4-turbo"
 #
-# xAI API (requires XAI_API_KEY):
-#   - "xai/grok-3-mini", "xai/grok-3"
-#
 # GLM / Z.AI API (requires GLM API key):
 #   - "glm/glm-4.7" (or use alias "glm")
 #
@@ -51,11 +48,6 @@ base_url = "https://api.anthropic.com"
 # For local OpenAI-compatible servers (LM Studio, llamafile, vLLM):
 # api_key = "not-needed"
 # base_url = "http://127.0.0.1:8080/v1" # LM Studio default is http://127.0.0.1:1234/v1
-
-# xAI configuration (optional, for xai/* models)
-# [providers.xai]
-# api_key = "${XAI_API_KEY}"
-# base_url = "https://api.x.ai/v1"
 
 # Ollama configuration (for local models)
 # [providers.ollama]
@@ -143,11 +135,10 @@ bind = "127.0.0.1"
 
 # Web search (optional)
 # [tools.web_search]
-# provider = "searxng"            # searxng | brave | tavily | perplexity | none
+# provider = "searxng"            # searxng | brave | none
 # cache_enabled = true
 # cache_ttl = 900                 # seconds (default: 15 min)
 # max_results = 5                 # 1-10
-# prefer_native = true            # use provider-native search if available
 #
 # [tools.web_search.searxng]
 # base_url = "http://localhost:8080"
@@ -159,15 +150,6 @@ bind = "127.0.0.1"
 # api_key = "${BRAVE_API_KEY}"
 # country = ""
 # freshness = ""                  # pd | pw | pm | ""
-#
-# [tools.web_search.tavily]
-# api_key = "${TAVILY_API_KEY}"
-# search_depth = "basic"          # basic | advanced
-# include_answer = true
-#
-# [tools.web_search.perplexity]
-# api_key = "${PERPLEXITY_API_KEY}"
-# model = "sonar"                 # sonar | sonar-pro | sonar-reasoning-pro
 
 # Telegram bot (optional)
 # Create a bot via @BotFather on Telegram to get an API token

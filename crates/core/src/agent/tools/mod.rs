@@ -2,13 +2,8 @@ pub mod web_search;
 
 use anyhow::Result;
 use async_trait::async_trait;
-use once_cell::sync::Lazy;
-use readability::extractor;
-use regex::Regex;
 use serde_json::{Value, json};
 use std::fs;
-use std::io::Cursor;
-use std::net::IpAddr;
 use std::path::PathBuf;
 use std::sync::Arc;
 use tracing::debug;
@@ -40,9 +35,6 @@ pub fn create_safe_tools(
     config: &Config,
     memory: Option<Arc<MemoryManager>>,
 ) -> Result<Vec<Box<dyn Tool>>> {
-    use super::hardcoded_filters;
-    use super::tool_filters::CompiledToolFilter;
-
     let workspace = config.workspace_path();
 
     // Use indexed memory search if MemoryManager is provided, otherwise fallback to grep-based
@@ -52,25 +44,10 @@ pub fn create_safe_tools(
         Box::new(MemorySearchTool::new(workspace.clone()))
     };
 
-    // Compile web_fetch filter with SSRF deny patterns
-    let web_fetch_filter = config
-        .tools
-        .filters
-        .get("web_fetch")
-        .map(CompiledToolFilter::compile)
-        .unwrap_or_else(|| Ok(CompiledToolFilter::permissive()))?
-        .merge_hardcoded(
-            hardcoded_filters::WEB_FETCH_DENY_SUBSTRINGS,
-            hardcoded_filters::WEB_FETCH_DENY_PATTERNS,
-        )?;
-
     let mut tools: Vec<Box<dyn Tool>> = vec![
         memory_search_tool,
         Box::new(MemoryGetTool::new(workspace)),
-        Box::new(WebFetchTool::new(
-            config.tools.web_fetch_max_bytes,
-            web_fetch_filter,
-        )),
+        Box::new(WebFetchTool::new(config.tools.web_fetch_max_bytes)),
     ];
 
     // Conditionally add web search tool
@@ -382,128 +359,17 @@ impl Tool for MemoryGetTool {
     }
 }
 
-fn truncate_on_char_boundary(s: &str, max_bytes: usize) -> &str {
-    if s.len() <= max_bytes {
-        return s;
-    }
-
-    let mut end = max_bytes;
-    while end > 0 && !s.is_char_boundary(end) {
-        end -= 1;
-    }
-    &s[..end]
-}
-
-fn is_private_ip(addr: &IpAddr) -> bool {
-    match addr {
-        IpAddr::V4(ip) => {
-            ip.is_loopback() || ip.is_private() || ip.is_link_local() || ip.is_unspecified()
-        }
-        IpAddr::V6(ip) => {
-            ip.is_loopback()
-                || ip.is_unspecified()
-                || (ip.segments()[0] & 0xffc0) == 0xfe80
-                || (ip.segments()[0] & 0xfe00) == 0xfc00
-        }
-    }
-}
-
-fn is_blocked_hostname(host: &str) -> bool {
-    let host = host.to_ascii_lowercase();
-    let blocked = ["localhost", "metadata.google.internal", "169.254.169.254"];
-    let blocked_tlds = [".local", ".internal", ".localhost"];
-
-    blocked.contains(&host.as_str()) || blocked_tlds.iter().any(|tld| host.ends_with(tld))
-}
-
-async fn validate_web_fetch_url(url: &str) -> Result<reqwest::Url> {
-    let parsed = reqwest::Url::parse(url)?;
-
-    if !matches!(parsed.scheme(), "http" | "https") {
-        anyhow::bail!("Only http/https URLs are allowed");
-    }
-
-    let host = parsed
-        .host_str()
-        .ok_or_else(|| anyhow::anyhow!("No host in URL"))?;
-
-    if is_blocked_hostname(host) {
-        anyhow::bail!("Blocked hostname: {}", host);
-    }
-
-    if let Ok(ip) = host.parse::<IpAddr>() {
-        if is_private_ip(&ip) {
-            anyhow::bail!("URL resolves to private IP {} — blocked for security", ip);
-        }
-        return Ok(parsed);
-    }
-
-    let port = parsed.port_or_known_default().unwrap_or(443);
-    let addrs = tokio::net::lookup_host((host, port)).await?;
-    for addr in addrs {
-        if is_private_ip(&addr.ip()) {
-            anyhow::bail!(
-                "URL {} resolves to private IP {} — blocked for security",
-                url,
-                addr.ip()
-            );
-        }
-    }
-
-    Ok(parsed)
-}
-
-fn extract_fallback_text(html: &str) -> String {
-    static SCRIPT_RE: Lazy<Regex> =
-        Lazy::new(|| Regex::new(r"(?is)<script[^>]*>.*?</script>").expect("valid script regex"));
-    static STYLE_RE: Lazy<Regex> =
-        Lazy::new(|| Regex::new(r"(?is)<style[^>]*>.*?</style>").expect("valid style regex"));
-    static TAG_RE: Lazy<Regex> =
-        Lazy::new(|| Regex::new(r"(?is)<[^>]+>").expect("valid tag regex"));
-    static WS_RE: Lazy<Regex> = Lazy::new(|| Regex::new(r"\s+").expect("valid whitespace regex"));
-
-    let no_scripts = SCRIPT_RE.replace_all(html, " ");
-    let no_styles = STYLE_RE.replace_all(&no_scripts, " ");
-    let no_tags = TAG_RE.replace_all(&no_styles, " ");
-    WS_RE.replace_all(no_tags.trim(), " ").to_string()
-}
-
-fn extract_readable_text(html: &str, url: &reqwest::Url) -> String {
-    let mut cursor = Cursor::new(html.as_bytes());
-    match extractor::extract(&mut cursor, url) {
-        Ok(product) => {
-            let text = product.text.trim();
-            if text.is_empty() {
-                return extract_fallback_text(html);
-            }
-
-            let title = product.title.trim();
-            if title.is_empty() {
-                text.to_string()
-            } else {
-                format!("# {}\n\n{}", title, text)
-            }
-        }
-        Err(e) => {
-            debug!("Readability extraction failed for {}: {}", url, e);
-            extract_fallback_text(html)
-        }
-    }
-}
-
 // Web Fetch Tool
 pub struct WebFetchTool {
     client: reqwest::Client,
     max_bytes: usize,
-    filter: super::tool_filters::CompiledToolFilter,
 }
 
 impl WebFetchTool {
-    pub fn new(max_bytes: usize, filter: super::tool_filters::CompiledToolFilter) -> Self {
+    pub fn new(max_bytes: usize) -> Self {
         Self {
             client: reqwest::Client::new(),
             max_bytes,
-            filter,
         }
     }
 }
@@ -537,50 +403,30 @@ impl Tool for WebFetchTool {
             .as_str()
             .ok_or_else(|| anyhow::anyhow!("Missing url"))?;
 
-        // Check URL against SSRF deny filters (fast, static patterns)
-        self.filter.check(url, "web_fetch", "url")?;
-
-        let parsed_url = validate_web_fetch_url(url).await?;
-        debug!("Fetching URL: {}", parsed_url);
+        debug!("Fetching URL: {}", url);
 
         let response = self
             .client
-            .get(parsed_url.clone())
+            .get(url)
             .header("User-Agent", "LocalGPT/0.1")
             .send()
             .await?;
 
         let status = response.status();
-        let content_type = response
-            .headers()
-            .get(reqwest::header::CONTENT_TYPE)
-            .and_then(|v| v.to_str().ok())
-            .unwrap_or("")
-            .to_string();
         let body = response.text().await?;
-        let extracted =
-            if content_type.contains("text/html") || content_type.contains("application/xhtml") {
-                extract_readable_text(&body, &parsed_url)
-            } else {
-                body
-            };
 
         // Truncate if too long
-        let truncated = if extracted.len() > self.max_bytes {
-            let prefix = truncate_on_char_boundary(&extracted, self.max_bytes);
+        let truncated = if body.len() > self.max_bytes {
             format!(
                 "{}...\n\n[Truncated, {} bytes total]",
-                prefix,
-                extracted.len()
+                &body[..self.max_bytes],
+                body.len()
             )
         } else {
-            extracted
+            body
         };
 
-        Ok(format!(
-            "Status: {}\nURL: {}\nContent-Type: {}\n\n{}",
-            status, parsed_url, content_type, truncated
-        ))
+        Ok(format!("Status: {}\n\n{}", status, truncated))
     }
 }
 
@@ -615,48 +461,5 @@ pub fn extract_tool_detail(tool_name: &str, arguments: &str) -> Option<String> {
             .and_then(|v| v.as_str())
             .map(|s| format!("\"{}\"", s)),
         _ => None,
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_is_private_ip_v4_ranges() {
-        assert!(is_private_ip(&"127.0.0.1".parse().unwrap()));
-        assert!(is_private_ip(&"10.0.0.5".parse().unwrap()));
-        assert!(is_private_ip(&"192.168.1.1".parse().unwrap()));
-        assert!(is_private_ip(&"169.254.0.10".parse().unwrap()));
-        assert!(!is_private_ip(&"8.8.8.8".parse().unwrap()));
-    }
-
-    #[test]
-    fn test_is_private_ip_v6_ranges() {
-        assert!(is_private_ip(&"::1".parse().unwrap()));
-        assert!(is_private_ip(&"fe80::1".parse().unwrap()));
-        assert!(is_private_ip(&"fc00::1".parse().unwrap()));
-        assert!(!is_private_ip(&"2606:4700:4700::1111".parse().unwrap()));
-    }
-
-    #[test]
-    fn test_is_blocked_hostname() {
-        assert!(is_blocked_hostname("localhost"));
-        assert!(is_blocked_hostname("metadata.google.internal"));
-        assert!(is_blocked_hostname("my-service.internal"));
-        assert!(is_blocked_hostname("printer.local"));
-        assert!(!is_blocked_hostname("example.com"));
-    }
-
-    #[test]
-    fn test_extract_readable_text_removes_html() {
-        let html = r#"
-            <html><head><style>.x{display:none}</style></head>
-            <body><script>alert(1)</script><h1>Title</h1><p>Hello <b>world</b>.</p></body></html>
-        "#;
-        let url = reqwest::Url::parse("https://example.com/test").unwrap();
-        let text = extract_readable_text(html, &url);
-        assert!(text.contains("Hello world"));
-        assert!(!text.contains("alert(1)"));
     }
 }

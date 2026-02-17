@@ -156,16 +156,6 @@ pub trait LLMProvider: Send + Sync {
 
     async fn summarize(&self, text: &str) -> Result<String>;
 
-    /// Whether this provider supports native, server-side web search.
-    fn supports_native_search(&self) -> bool {
-        false
-    }
-
-    /// Provider-native tool definitions to include with regular tool schemas.
-    fn native_tool_definitions(&self) -> Vec<Value> {
-        Vec::new()
-    }
-
     /// Reset provider session state (e.g., clear cached CLI session ID).
     /// Called when starting a new conversation via `/new`.
     /// Default: no-op (most providers are stateless).
@@ -210,7 +200,6 @@ fn resolve_model_alias(model: &str) -> String {
         "gpt" => "openai/gpt-4o".to_string(),
         "gpt-mini" => "openai/gpt-4o-mini".to_string(),
         "glm" => "glm/glm-4.7".to_string(),
-        "grok" => "xai/grok-3-mini".to_string(),
         _ => model.to_string(),
     }
 }
@@ -249,8 +238,6 @@ pub fn create_provider(model: &str, config: &Config) -> Result<Box<dyn LLMProvid
         ("anthropic".to_string(), model.clone())
     } else if model.starts_with("glm-") {
         ("glm".to_string(), model.clone())
-    } else if model.starts_with("grok-") {
-        ("xai".to_string(), model.clone())
     } else {
         // Default to anthropic for unknown models, or ollama if configured
         if config.providers.ollama.is_some() {
@@ -295,23 +282,6 @@ pub fn create_provider(model: &str, config: &Config) -> Result<Box<dyn LLMProvid
             Ok(Box::new(OpenAIProvider::new(
                 &openai_config.api_key,
                 &openai_config.base_url,
-                &model_id,
-            )?))
-        }
-
-        "xai" => {
-            let xai_config = config.providers.xai.as_ref().ok_or_else(|| {
-                anyhow::anyhow!(
-                    "xAI provider not configured.\n\
-                    Set XAI_API_KEY env var or add to ~/.localgpt/config.toml:\n\n\
-                    [providers.xai]\n\
-                    api_key = \"xai-...\""
-                )
-            })?;
-
-            Ok(Box::new(XaiProvider::new(
-                &xai_config.api_key,
-                &xai_config.base_url,
                 &model_id,
             )?))
         }
@@ -381,11 +351,10 @@ pub fn create_provider(model: &str, config: &Config) -> Result<Box<dyn LLMProvid
                 Supported formats (OpenClaw-compatible):\n  \
                 - anthropic/claude-opus-4-5, anthropic/claude-sonnet-4-5\n  \
                 - openai/gpt-4o, openai/gpt-4o-mini\n  \
-                - xai/grok-3-mini\n  \
                 - glm/glm-4.7\n  \
                 - claude-cli/opus, claude-cli/sonnet\n  \
                 - ollama/llama3, ollama/mistral\n\n\
-                Or use aliases: opus, sonnet, haiku, gpt, gpt-mini, grok, glm",
+                Or use aliases: opus, sonnet, haiku, gpt, gpt-mini, glm",
                 provider,
                 model
             )
@@ -601,282 +570,6 @@ impl LLMProvider for OpenAIProvider {
     }
 }
 
-// xAI Provider (Responses API + native web_search passthrough)
-pub struct XaiProvider {
-    client: Client,
-    api_key: String,
-    base_url: String,
-    model: String,
-}
-
-impl XaiProvider {
-    pub fn new(api_key: &str, base_url: &str, model: &str) -> Result<Self> {
-        Ok(Self {
-            client: Client::new(),
-            api_key: api_key.to_string(),
-            base_url: base_url.to_string(),
-            model: model.to_string(),
-        })
-    }
-
-    fn format_tools(&self, tools: &[ToolSchema]) -> Vec<Value> {
-        tools
-            .iter()
-            .map(|t| {
-                json!({
-                    "type": "function",
-                    "name": t.name,
-                    "description": t.description,
-                    "parameters": t.parameters
-                })
-            })
-            .collect()
-    }
-
-    fn format_text_message(role: &str, content: &str) -> Value {
-        json!({
-            "role": role,
-            "content": content
-        })
-    }
-
-    fn format_message_with_images(role: &str, content: &str, images: &[ImageAttachment]) -> Value {
-        let mut parts: Vec<Value> = Vec::new();
-
-        if !content.is_empty() {
-            parts.push(json!({
-                "type": "input_text",
-                "text": content
-            }));
-        }
-
-        for image in images {
-            parts.push(json!({
-                "type": "input_image",
-                "image_url": format!("data:{};base64,{}", image.media_type, image.data)
-            }));
-        }
-
-        json!({
-            "role": role,
-            "content": parts
-        })
-    }
-
-    fn format_input(&self, messages: &[Message]) -> Vec<Value> {
-        let mut formatted = Vec::new();
-
-        for message in messages {
-            match message.role {
-                Role::System | Role::User | Role::Assistant => {
-                    let role = match message.role {
-                        Role::System => "system",
-                        Role::User => "user",
-                        Role::Assistant => "assistant",
-                        Role::Tool => unreachable!(),
-                    };
-
-                    if let Some(tool_calls) = message.tool_calls.as_ref()
-                        && !tool_calls.is_empty()
-                    {
-                        if !message.content.is_empty() {
-                            formatted.push(Self::format_text_message(role, &message.content));
-                        }
-
-                        for tool_call in tool_calls {
-                            formatted.push(json!({
-                                "type": "function_call",
-                                "call_id": tool_call.id,
-                                "name": tool_call.name,
-                                "arguments": tool_call.arguments
-                            }));
-                        }
-                    } else if message.images.is_empty() {
-                        formatted.push(Self::format_text_message(role, &message.content));
-                    } else {
-                        formatted.push(Self::format_message_with_images(
-                            role,
-                            &message.content,
-                            &message.images,
-                        ));
-                    }
-                }
-                Role::Tool => {
-                    if let Some(tool_call_id) = message.tool_call_id.as_ref() {
-                        formatted.push(json!({
-                            "type": "function_call_output",
-                            "call_id": tool_call_id,
-                            "output": message.content
-                        }));
-                    }
-                }
-            }
-        }
-
-        formatted
-    }
-
-    fn parse_tool_calls(output: &[Value]) -> Vec<ToolCall> {
-        output
-            .iter()
-            .filter(|item| item["type"] == "function_call")
-            .map(|item| {
-                let arguments = if let Some(args) = item["arguments"].as_str() {
-                    args.to_string()
-                } else {
-                    serde_json::to_string(&item["arguments"]).unwrap_or_else(|_| "{}".to_string())
-                };
-
-                ToolCall {
-                    id: item["call_id"]
-                        .as_str()
-                        .or_else(|| item["id"].as_str())
-                        .unwrap_or("")
-                        .to_string(),
-                    name: item["name"].as_str().unwrap_or("").to_string(),
-                    arguments,
-                }
-            })
-            .filter(|call| !call.id.is_empty() && !call.name.is_empty())
-            .collect()
-    }
-
-    fn parse_output_text(response_body: &Value) -> String {
-        let mut text = String::new();
-
-        if let Some(output) = response_body["output"].as_array() {
-            for item in output {
-                if item["type"] != "message" {
-                    continue;
-                }
-
-                if let Some(content_parts) = item["content"].as_array() {
-                    for part in content_parts {
-                        let part_type = part["type"].as_str().unwrap_or("");
-                        if part_type == "output_text" || part_type == "text" {
-                            if let Some(chunk) = part["text"].as_str() {
-                                text.push_str(chunk);
-                            }
-                        }
-                    }
-                } else if let Some(content) = item["content"].as_str() {
-                    text.push_str(content);
-                }
-            }
-        }
-
-        if text.is_empty()
-            && let Some(top_level_text) = response_body["output_text"].as_str()
-        {
-            return top_level_text.to_string();
-        }
-
-        text
-    }
-}
-
-#[async_trait]
-impl LLMProvider for XaiProvider {
-    fn supports_native_search(&self) -> bool {
-        true
-    }
-
-    fn native_tool_definitions(&self) -> Vec<Value> {
-        vec![json!({
-            "type": "web_search"
-        })]
-    }
-
-    async fn chat(
-        &self,
-        messages: &[Message],
-        tools: Option<&[ToolSchema]>,
-    ) -> Result<LLMResponse> {
-        let mut body = json!({
-            "model": self.model,
-            "input": self.format_input(messages)
-        });
-
-        let mut all_tools = Vec::new();
-        if let Some(tool_schemas) = tools {
-            let client_has_web_search = tool_schemas.iter().any(|t| t.name == "web_search");
-            if !client_has_web_search {
-                all_tools.extend(self.native_tool_definitions());
-            }
-            if !tool_schemas.is_empty() {
-                all_tools.extend(self.format_tools(tool_schemas));
-            }
-        }
-        if !all_tools.is_empty() {
-            body["tools"] = json!(all_tools);
-        }
-
-        debug!("xAI request: {}", serde_json::to_string_pretty(&body)?);
-
-        let response = self
-            .client
-            .post(format!("{}/responses", self.base_url))
-            .header("Authorization", format!("Bearer {}", self.api_key))
-            .header("Content-Type", "application/json")
-            .json(&body)
-            .send()
-            .await?;
-
-        let response_body: Value = response.json().await?;
-        debug!(
-            "xAI response: {}",
-            serde_json::to_string_pretty(&response_body)?
-        );
-
-        // Check for errors
-        if let Some(error) = response_body.get("error") {
-            anyhow::bail!("xAI API error: {}", error);
-        }
-
-        let output = response_body["output"]
-            .as_array()
-            .cloned()
-            .unwrap_or_default();
-        let usage = response_body.get("usage").map(|u| Usage {
-            input_tokens: u["input_tokens"].as_u64().unwrap_or(0),
-            output_tokens: u["output_tokens"].as_u64().unwrap_or(0),
-        });
-
-        let parsed_calls = Self::parse_tool_calls(&output);
-        if !parsed_calls.is_empty() {
-            return Ok(LLMResponse {
-                content: LLMResponseContent::ToolCalls(parsed_calls),
-                usage,
-            });
-        }
-
-        let content = Self::parse_output_text(&response_body);
-
-        Ok(LLMResponse {
-            content: LLMResponseContent::Text(content),
-            usage,
-        })
-    }
-
-    async fn summarize(&self, text: &str) -> Result<String> {
-        let messages = vec![Message {
-            role: Role::User,
-            content: format!(
-                "Summarize the following conversation concisely, preserving key information and context:\n\n{}",
-                text
-            ),
-            tool_calls: None,
-            tool_call_id: None,
-            images: Vec::new(),
-        }];
-
-        match self.chat(&messages, None).await?.content {
-            LLMResponseContent::Text(summary) => Ok(summary),
-            _ => anyhow::bail!("Unexpected response type"),
-        }
-    }
-}
-
 // Anthropic Provider
 pub struct AnthropicProvider {
     client: Client,
@@ -998,17 +691,6 @@ impl AnthropicProvider {
 
 #[async_trait]
 impl LLMProvider for AnthropicProvider {
-    fn supports_native_search(&self) -> bool {
-        true
-    }
-
-    fn native_tool_definitions(&self) -> Vec<Value> {
-        vec![json!({
-            "type": "web_search_20250305",
-            "name": "web_search"
-        })]
-    }
-
     async fn chat(
         &self,
         messages: &[Message],
@@ -1026,18 +708,10 @@ impl LLMProvider for AnthropicProvider {
             body["system"] = json!(system);
         }
 
-        let mut all_tools = Vec::new();
-        if let Some(tool_schemas) = tools {
-            let client_has_web_search = tool_schemas.iter().any(|t| t.name == "web_search");
-            if !client_has_web_search {
-                all_tools.extend(self.native_tool_definitions());
-            }
-            if !tool_schemas.is_empty() {
-                all_tools.extend(self.format_tools(tool_schemas));
-            }
-        }
-        if !all_tools.is_empty() {
-            body["tools"] = json!(all_tools);
+        if let Some(tools) = tools
+            && !tools.is_empty()
+        {
+            body["tools"] = json!(self.format_tools(tools));
         }
 
         debug!(
@@ -1144,18 +818,11 @@ impl LLMProvider for AnthropicProvider {
             body["system"] = json!(system);
         }
 
-        let mut all_tools = Vec::new();
-        if let Some(tool_schemas) = tools {
-            let client_has_web_search = tool_schemas.iter().any(|t| t.name == "web_search");
-            if !client_has_web_search {
-                all_tools.extend(self.native_tool_definitions());
-            }
-            if !tool_schemas.is_empty() {
-                all_tools.extend(self.format_tools(tool_schemas));
-            }
-        }
-        if !all_tools.is_empty() {
-            body["tools"] = json!(all_tools);
+        // Include tools so the model uses native tool_use instead of XML
+        if let Some(tools) = tools
+            && !tools.is_empty()
+        {
+            body["tools"] = json!(self.format_tools(tools));
         }
 
         debug!(
@@ -2343,87 +2010,10 @@ mod tests {
         assert_eq!(resolve_model_alias("sonnet"), "anthropic/claude-sonnet-4-5");
         assert_eq!(resolve_model_alias("gpt"), "openai/gpt-4o");
         assert_eq!(resolve_model_alias("gpt-mini"), "openai/gpt-4o-mini");
-        assert_eq!(resolve_model_alias("grok"), "xai/grok-3-mini");
         assert_eq!(
             resolve_model_alias("custom-model"),
             "custom-model".to_string()
         );
     }
 
-    #[test]
-    fn test_xai_native_search_definition() {
-        let provider = XaiProvider::new("test-key", "https://api.x.ai/v1", "grok-3-mini")
-            .expect("provider should construct");
-        assert!(provider.supports_native_search());
-        let defs = provider.native_tool_definitions();
-        assert_eq!(defs.len(), 1);
-        assert_eq!(defs[0]["type"], "web_search");
-    }
-
-    #[test]
-    fn test_xai_parse_tool_calls_from_responses_output() {
-        let output = vec![json!({
-            "type": "function_call",
-            "id": "fc_1",
-            "call_id": "call_1",
-            "name": "memory_search",
-            "arguments": "{\"query\":\"rust\"}"
-        })];
-
-        let calls = XaiProvider::parse_tool_calls(&output);
-        assert_eq!(calls.len(), 1);
-        assert_eq!(calls[0].id, "call_1");
-        assert_eq!(calls[0].name, "memory_search");
-        assert_eq!(calls[0].arguments, "{\"query\":\"rust\"}");
-    }
-
-    #[test]
-    fn test_xai_parse_output_text_from_responses_output() {
-        let body = json!({
-            "output": [{
-                "type": "message",
-                "content": [
-                    {"type": "output_text", "text": "Hello"},
-                    {"type": "output_text", "text": " world"}
-                ]
-            }]
-        });
-
-        let text = XaiProvider::parse_output_text(&body);
-        assert_eq!(text, "Hello world");
-    }
-
-    #[test]
-    fn test_xai_format_input_includes_tool_output_item() {
-        let provider = XaiProvider::new("test-key", "https://api.x.ai/v1", "grok-3-mini")
-            .expect("provider should construct");
-
-        let messages = vec![
-            Message {
-                role: Role::Assistant,
-                content: String::new(),
-                tool_calls: Some(vec![ToolCall {
-                    id: "call_1".to_string(),
-                    name: "memory_search".to_string(),
-                    arguments: "{\"query\":\"rust\"}".to_string(),
-                }]),
-                tool_call_id: None,
-                images: Vec::new(),
-            },
-            Message {
-                role: Role::Tool,
-                content: "result".to_string(),
-                tool_calls: None,
-                tool_call_id: Some("call_1".to_string()),
-                images: Vec::new(),
-            },
-        ];
-
-        let formatted = provider.format_input(&messages);
-        assert_eq!(formatted.len(), 2);
-        assert_eq!(formatted[0]["type"], "function_call");
-        assert_eq!(formatted[1]["type"], "function_call_output");
-        assert_eq!(formatted[1]["call_id"], "call_1");
-        assert_eq!(formatted[1]["output"], "result");
-    }
 }
