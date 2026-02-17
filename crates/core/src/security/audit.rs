@@ -76,6 +76,8 @@ pub enum AuditAction {
     FileChanged,
     /// Agent tool attempted to write a protected file.
     WriteBlocked,
+    /// Tool attempted to access a path outside allowed directories.
+    PathDenied,
     /// Previous audit entry corrupted, new chain segment started.
     ChainRecovery,
 }

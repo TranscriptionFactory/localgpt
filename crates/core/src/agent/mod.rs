@@ -1,9 +1,12 @@
+pub mod hardcoded_filters;
+pub mod path_utils;
 pub mod providers;
 pub mod sanitize;
 pub mod session;
 pub mod session_store;
 pub mod skills;
 pub mod system_prompt;
+pub mod tool_filters;
 pub mod tools;
 
 pub use providers::{

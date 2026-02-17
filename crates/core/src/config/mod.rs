@@ -94,6 +94,11 @@ pub struct ToolsConfig {
     /// Web search configuration (disabled by default)
     #[serde(default)]
     pub web_search: Option<WebSearchConfig>,
+
+    /// Per-tool input filters (deny/allow patterns and substrings).
+    /// Keys are tool names (e.g. "bash", "web_fetch").
+    #[serde(default)]
+    pub filters: std::collections::HashMap<String, crate::agent::tool_filters::ToolFilter>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -201,6 +206,11 @@ pub struct SecurityConfig {
     /// Skip injecting the hardcoded security suffix (default: false)
     #[serde(default)]
     pub disable_suffix: bool,
+
+    /// Restrict file tools to these directories (empty = unrestricted).
+    /// Paths are canonicalized at startup. Symlinks are resolved before checking.
+    #[serde(default)]
+    pub allowed_directories: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -598,6 +608,7 @@ impl Default for ToolsConfig {
             log_injection_warnings: default_true(),
             use_content_delimiters: default_true(),
             web_search: None,
+            filters: std::collections::HashMap::new(),
         }
     }
 }
