@@ -40,6 +40,9 @@ pub fn create_safe_tools(
     config: &Config,
     memory: Option<Arc<MemoryManager>>,
 ) -> Result<Vec<Box<dyn Tool>>> {
+    use super::hardcoded_filters;
+    use super::tool_filters::CompiledToolFilter;
+
     let workspace = config.workspace_path();
 
     // Use indexed memory search if MemoryManager is provided, otherwise fallback to grep-based
@@ -49,10 +52,25 @@ pub fn create_safe_tools(
         Box::new(MemorySearchTool::new(workspace.clone()))
     };
 
+    // Compile web_fetch filter with SSRF deny patterns
+    let web_fetch_filter = config
+        .tools
+        .filters
+        .get("web_fetch")
+        .map(CompiledToolFilter::compile)
+        .unwrap_or_else(|| Ok(CompiledToolFilter::permissive()))?
+        .merge_hardcoded(
+            hardcoded_filters::WEB_FETCH_DENY_SUBSTRINGS,
+            hardcoded_filters::WEB_FETCH_DENY_PATTERNS,
+        )?;
+
     let mut tools: Vec<Box<dyn Tool>> = vec![
         memory_search_tool,
         Box::new(MemoryGetTool::new(workspace)),
-        Box::new(WebFetchTool::new(config.tools.web_fetch_max_bytes)),
+        Box::new(WebFetchTool::new(
+            config.tools.web_fetch_max_bytes,
+            web_fetch_filter,
+        )),
     ];
 
     // Conditionally add web search tool
@@ -477,13 +495,15 @@ fn extract_readable_text(html: &str, url: &reqwest::Url) -> String {
 pub struct WebFetchTool {
     client: reqwest::Client,
     max_bytes: usize,
+    filter: super::tool_filters::CompiledToolFilter,
 }
 
 impl WebFetchTool {
-    pub fn new(max_bytes: usize) -> Self {
+    pub fn new(max_bytes: usize, filter: super::tool_filters::CompiledToolFilter) -> Self {
         Self {
             client: reqwest::Client::new(),
             max_bytes,
+            filter,
         }
     }
 }
@@ -516,6 +536,9 @@ impl Tool for WebFetchTool {
         let url = args["url"]
             .as_str()
             .ok_or_else(|| anyhow::anyhow!("Missing url"))?;
+
+        // Check URL against SSRF deny filters (fast, static patterns)
+        self.filter.check(url, "web_fetch", "url")?;
 
         let parsed_url = validate_web_fetch_url(url).await?;
         debug!("Fetching URL: {}", parsed_url);
