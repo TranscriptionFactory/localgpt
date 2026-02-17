@@ -11,11 +11,49 @@ use std::fs;
 use std::path::PathBuf;
 use tracing::debug;
 
+use localgpt_core::agent::hardcoded_filters;
+use localgpt_core::agent::path_utils::{check_path_allowed, resolve_real_path};
 use localgpt_core::agent::providers::ToolSchema;
+use localgpt_core::agent::tool_filters::CompiledToolFilter;
 use localgpt_core::agent::tools::Tool;
 use localgpt_core::config::Config;
 use localgpt_core::security;
 use localgpt_sandbox::{self, SandboxPolicy};
+
+/// Compile a tool filter from config (if present), then merge hardcoded defaults.
+fn compile_filter_for(
+    config: &Config,
+    tool_name: &str,
+    hardcoded_subs: &[&str],
+    hardcoded_pats: &[&str],
+) -> Result<CompiledToolFilter> {
+    let base = config
+        .tools
+        .filters
+        .get(tool_name)
+        .map(CompiledToolFilter::compile)
+        .unwrap_or_else(|| Ok(CompiledToolFilter::permissive()))?;
+    base.merge_hardcoded(hardcoded_subs, hardcoded_pats)
+}
+
+/// Canonicalize configured allowed_directories into absolute paths.
+fn resolve_allowed_directories(config: &Config) -> Vec<PathBuf> {
+    config
+        .security
+        .allowed_directories
+        .iter()
+        .filter_map(|d| {
+            let expanded = shellexpand::tilde(d).to_string();
+            match fs::canonicalize(&expanded) {
+                Ok(p) => Some(p),
+                Err(e) => {
+                    tracing::warn!("Ignoring non-existent allowed_directory '{}': {}", d, e);
+                    None
+                }
+            }
+        })
+        .collect()
+}
 
 /// Create just the CLI-specific dangerous tools (bash, read_file, write_file, edit_file).
 ///
@@ -47,18 +85,45 @@ pub fn create_cli_tools(config: &Config) -> Result<Vec<Box<dyn Tool>>> {
         None
     };
 
+    // Compile per-tool filters with hardcoded defaults
+    let bash_filter = compile_filter_for(
+        config,
+        "bash",
+        hardcoded_filters::BASH_DENY_SUBSTRINGS,
+        hardcoded_filters::BASH_DENY_PATTERNS,
+    )?;
+
+    // File tools get no hardcoded filters (path scoping handles security)
+    let file_filter = compile_filter_for(config, "file", &[], &[])?;
+    let allowed_dirs = resolve_allowed_directories(config);
+    let strict_policy = config.security.strict_policy;
+
     Ok(vec![
         Box::new(BashTool::new(
             config.tools.bash_timeout_ms,
             state_dir.clone(),
             sandbox_policy.clone(),
+            bash_filter,
+            strict_policy,
         )),
-        Box::new(ReadFileTool::new(sandbox_policy.clone())),
+        Box::new(ReadFileTool::new(
+            sandbox_policy.clone(),
+            file_filter.clone(),
+            allowed_dirs.clone(),
+            state_dir.clone(),
+        )),
         Box::new(WriteFileTool::new(
             state_dir.clone(),
             sandbox_policy.clone(),
+            file_filter.clone(),
+            allowed_dirs.clone(),
         )),
-        Box::new(EditFileTool::new(state_dir, sandbox_policy)),
+        Box::new(EditFileTool::new(
+            state_dir,
+            sandbox_policy,
+            file_filter,
+            allowed_dirs,
+        )),
     ])
 }
 
@@ -67,6 +132,8 @@ pub struct BashTool {
     default_timeout_ms: u64,
     state_dir: PathBuf,
     sandbox_policy: Option<SandboxPolicy>,
+    filter: CompiledToolFilter,
+    strict_policy: bool,
 }
 
 impl BashTool {
@@ -74,11 +141,15 @@ impl BashTool {
         default_timeout_ms: u64,
         state_dir: PathBuf,
         sandbox_policy: Option<SandboxPolicy>,
+        filter: CompiledToolFilter,
+        strict_policy: bool,
     ) -> Self {
         Self {
             default_timeout_ms,
             state_dir,
             sandbox_policy,
+            filter,
+            strict_policy,
         }
     }
 }
@@ -120,6 +191,9 @@ impl Tool for BashTool {
             .as_u64()
             .unwrap_or(self.default_timeout_ms);
 
+        // Check command against deny/allow filters
+        self.filter.check(command, "bash", "command")?;
+
         // Best-effort protected file check for bash commands
         let suspicious = security::check_bash_command(command);
         if !suspicious.is_empty() {
@@ -135,6 +209,12 @@ impl Tool for BashTool {
                 "tool:bash",
                 Some(&detail),
             );
+            if self.strict_policy {
+                anyhow::bail!(
+                    "Blocked: command references protected files: {:?}",
+                    suspicious
+                );
+            }
             tracing::warn!("Bash command may modify protected files: {:?}", suspicious);
         }
 
@@ -197,11 +277,24 @@ impl Tool for BashTool {
 // Read File Tool
 pub struct ReadFileTool {
     sandbox_policy: Option<SandboxPolicy>,
+    filter: CompiledToolFilter,
+    allowed_directories: Vec<PathBuf>,
+    state_dir: PathBuf,
 }
 
 impl ReadFileTool {
-    pub fn new(sandbox_policy: Option<SandboxPolicy>) -> Self {
-        Self { sandbox_policy }
+    pub fn new(
+        sandbox_policy: Option<SandboxPolicy>,
+        filter: CompiledToolFilter,
+        allowed_directories: Vec<PathBuf>,
+        state_dir: PathBuf,
+    ) -> Self {
+        Self {
+            sandbox_policy,
+            filter,
+            allowed_directories,
+            state_dir,
+        }
     }
 }
 
@@ -242,22 +335,36 @@ impl Tool for ReadFileTool {
             .as_str()
             .ok_or_else(|| anyhow::anyhow!("Missing path"))?;
 
-        let path = shellexpand::tilde(path).to_string();
+        // Resolve symlinks and check path scoping
+        let real_path = resolve_real_path(path)?;
+        let real_path_str = real_path.to_string_lossy();
+        self.filter.check(&real_path_str, "read_file", "path")?;
+        if let Err(e) = check_path_allowed(&real_path, &self.allowed_directories) {
+            let detail = format!("read_file denied: {}", real_path.display());
+            let _ = security::append_audit_entry_with_detail(
+                &self.state_dir,
+                security::AuditAction::PathDenied,
+                "",
+                "tool:read_file",
+                Some(&detail),
+            );
+            return Err(e);
+        }
 
         // Check credential directory access
         if let Some(ref policy) = self.sandbox_policy
-            && localgpt_sandbox::policy::is_path_denied(std::path::Path::new(&path), policy)
+            && localgpt_sandbox::policy::is_path_denied(&real_path, policy)
         {
             anyhow::bail!(
                 "Cannot read file in denied directory: {}. \
                      This path is blocked by sandbox policy.",
-                path
+                real_path.display()
             );
         }
 
-        debug!("Reading file: {}", path);
+        debug!("Reading file: {}", real_path.display());
 
-        let content = fs::read_to_string(&path)?;
+        let content = fs::read_to_string(&real_path)?;
 
         // Handle offset and limit
         let offset = args["offset"].as_u64().unwrap_or(0) as usize;
@@ -285,13 +392,22 @@ impl Tool for ReadFileTool {
 pub struct WriteFileTool {
     state_dir: PathBuf,
     sandbox_policy: Option<SandboxPolicy>,
+    filter: CompiledToolFilter,
+    allowed_directories: Vec<PathBuf>,
 }
 
 impl WriteFileTool {
-    pub fn new(state_dir: PathBuf, sandbox_policy: Option<SandboxPolicy>) -> Self {
+    pub fn new(
+        state_dir: PathBuf,
+        sandbox_policy: Option<SandboxPolicy>,
+        filter: CompiledToolFilter,
+        allowed_directories: Vec<PathBuf>,
+    ) -> Self {
         Self {
             state_dir,
             sandbox_policy,
+            filter,
+            allowed_directories,
         }
     }
 }
@@ -332,25 +448,38 @@ impl Tool for WriteFileTool {
             .as_str()
             .ok_or_else(|| anyhow::anyhow!("Missing content"))?;
 
-        let path = shellexpand::tilde(path).to_string();
-        let path = PathBuf::from(&path);
+        // Resolve symlinks and check path scoping
+        let real_path = resolve_real_path(path)?;
+        let real_path_str = real_path.to_string_lossy();
+        self.filter.check(&real_path_str, "write_file", "path")?;
+        if let Err(e) = check_path_allowed(&real_path, &self.allowed_directories) {
+            let detail = format!("write_file denied: {}", real_path.display());
+            let _ = security::append_audit_entry_with_detail(
+                &self.state_dir,
+                security::AuditAction::PathDenied,
+                "",
+                "tool:write_file",
+                Some(&detail),
+            );
+            return Err(e);
+        }
 
         // Check credential directory access
         if let Some(ref policy) = self.sandbox_policy
-            && localgpt_sandbox::policy::is_path_denied(&path, policy)
+            && localgpt_sandbox::policy::is_path_denied(&real_path, policy)
         {
             anyhow::bail!(
                 "Cannot write to denied directory: {}. \
                      This path is blocked by sandbox policy.",
-                path.display()
+                real_path.display()
             );
         }
 
         // Check protected files
-        if let Some(name) = path.file_name().and_then(|n| n.to_str())
+        if let Some(name) = real_path.file_name().and_then(|n| n.to_str())
             && security::is_workspace_file_protected(name)
         {
-            let detail = format!("Agent attempted write to {}", path.display());
+            let detail = format!("Agent attempted write to {}", real_path.display());
             let _ = security::append_audit_entry_with_detail(
                 &self.state_dir,
                 security::AuditAction::WriteBlocked,
@@ -361,23 +490,23 @@ impl Tool for WriteFileTool {
             anyhow::bail!(
                 "Cannot write to protected file: {}. This file is managed by the security system. \
                      Use `localgpt md sign` to update the security policy.",
-                path.display()
+                real_path.display()
             );
         }
 
-        debug!("Writing file: {}", path.display());
+        debug!("Writing file: {}", real_path.display());
 
         // Create parent directories if needed
-        if let Some(parent) = path.parent() {
+        if let Some(parent) = real_path.parent() {
             fs::create_dir_all(parent)?;
         }
 
-        fs::write(&path, content)?;
+        fs::write(&real_path, content)?;
 
         Ok(format!(
             "Successfully wrote {} bytes to {}",
             content.len(),
-            path.display()
+            real_path.display()
         ))
     }
 }
@@ -386,13 +515,22 @@ impl Tool for WriteFileTool {
 pub struct EditFileTool {
     state_dir: PathBuf,
     sandbox_policy: Option<SandboxPolicy>,
+    filter: CompiledToolFilter,
+    allowed_directories: Vec<PathBuf>,
 }
 
 impl EditFileTool {
-    pub fn new(state_dir: PathBuf, sandbox_policy: Option<SandboxPolicy>) -> Self {
+    pub fn new(
+        state_dir: PathBuf,
+        sandbox_policy: Option<SandboxPolicy>,
+        filter: CompiledToolFilter,
+        allowed_directories: Vec<PathBuf>,
+    ) -> Self {
         Self {
             state_dir,
             sandbox_policy,
+            filter,
+            allowed_directories,
         }
     }
 }
@@ -445,26 +583,38 @@ impl Tool for EditFileTool {
             .ok_or_else(|| anyhow::anyhow!("Missing new_string"))?;
         let replace_all = args["replace_all"].as_bool().unwrap_or(false);
 
-        let path = shellexpand::tilde(path).to_string();
+        // Resolve symlinks and check path scoping
+        let real_path = resolve_real_path(path)?;
+        let real_path_str = real_path.to_string_lossy();
+        self.filter.check(&real_path_str, "edit_file", "path")?;
+        if let Err(e) = check_path_allowed(&real_path, &self.allowed_directories) {
+            let detail = format!("edit_file denied: {}", real_path.display());
+            let _ = security::append_audit_entry_with_detail(
+                &self.state_dir,
+                security::AuditAction::PathDenied,
+                "",
+                "tool:edit_file",
+                Some(&detail),
+            );
+            return Err(e);
+        }
 
         // Check credential directory access
         if let Some(ref policy) = self.sandbox_policy
-            && localgpt_sandbox::policy::is_path_denied(std::path::Path::new(&path), policy)
+            && localgpt_sandbox::policy::is_path_denied(&real_path, policy)
         {
             anyhow::bail!(
                 "Cannot edit file in denied directory: {}. \
                      This path is blocked by sandbox policy.",
-                path
+                real_path.display()
             );
         }
 
         // Check protected files
-        if let Some(name) = std::path::Path::new(&path)
-            .file_name()
-            .and_then(|n| n.to_str())
+        if let Some(name) = real_path.file_name().and_then(|n| n.to_str())
             && security::is_workspace_file_protected(name)
         {
-            let detail = format!("Agent attempted edit to {}", path);
+            let detail = format!("Agent attempted edit to {}", real_path.display());
             let _ = security::append_audit_entry_with_detail(
                 &self.state_dir,
                 security::AuditAction::WriteBlocked,
@@ -474,13 +624,13 @@ impl Tool for EditFileTool {
             );
             anyhow::bail!(
                 "Cannot edit protected file: {}. This file is managed by the security system.",
-                path
+                real_path.display()
             );
         }
 
-        debug!("Editing file: {}", path);
+        debug!("Editing file: {}", real_path.display());
 
-        let content = fs::read_to_string(&path)?;
+        let content = fs::read_to_string(&real_path)?;
 
         let (new_content, count) = if replace_all {
             let count = content.matches(old_string).count();
@@ -491,8 +641,12 @@ impl Tool for EditFileTool {
             return Err(anyhow::anyhow!("old_string not found in file"));
         };
 
-        fs::write(&path, &new_content)?;
+        fs::write(&real_path, &new_content)?;
 
-        Ok(format!("Replaced {} occurrence(s) in {}", count, path))
+        Ok(format!(
+            "Replaced {} occurrence(s) in {}",
+            count,
+            real_path.display()
+        ))
     }
 }
