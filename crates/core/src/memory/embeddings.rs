@@ -163,7 +163,6 @@ pub fn hash_text(text: &str) -> String {
 use std::sync::{Arc, Mutex as StdMutex};
 
 #[cfg(feature = "embeddings-local")]
-
 pub struct FastEmbedProvider {
     model: Arc<StdMutex<fastembed::TextEmbedding>>,
     model_name: String,

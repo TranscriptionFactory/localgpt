@@ -63,7 +63,12 @@ mod tests {
     #[test]
     fn resolve_nonexistent_file_in_existing_dir() {
         let result = resolve_real_path("/tmp/nonexistent_test_file_xyz.txt").unwrap();
-        assert!(result.to_str().unwrap().contains("nonexistent_test_file_xyz.txt"));
+        assert!(
+            result
+                .to_str()
+                .unwrap()
+                .contains("nonexistent_test_file_xyz.txt")
+        );
     }
 
     #[test]

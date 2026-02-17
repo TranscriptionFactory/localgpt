@@ -152,11 +152,8 @@ impl CompiledToolFilter {
             }
         }
 
-        let existing_patterns: std::collections::HashSet<String> = self
-            .deny_patterns
-            .iter()
-            .map(|(s, _)| s.clone())
-            .collect();
+        let existing_patterns: std::collections::HashSet<String> =
+            self.deny_patterns.iter().map(|(s, _)| s.clone()).collect();
         for pat in deny_patterns {
             if !existing_patterns.contains(*pat) {
                 let re = Regex::new(pat)
@@ -235,7 +232,10 @@ mod tests {
         let f = make_filter(&[r"^/etc/", r"^/sys/"], &[], &[".env"]);
         assert!(f.check("/etc/passwd", "read_file", "path").is_err());
         assert!(f.check("/home/user/.env", "read_file", "path").is_err());
-        assert!(f.check("/home/user/code/main.rs", "read_file", "path").is_ok());
+        assert!(
+            f.check("/home/user/code/main.rs", "read_file", "path")
+                .is_ok()
+        );
     }
 
     #[test]

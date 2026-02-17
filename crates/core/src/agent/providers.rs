@@ -2015,5 +2015,4 @@ mod tests {
             "custom-model".to_string()
         );
     }
-
 }
