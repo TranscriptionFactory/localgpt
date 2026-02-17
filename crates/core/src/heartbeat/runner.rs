@@ -4,8 +4,8 @@ use anyhow::Result;
 use chrono::{Local, NaiveTime};
 use std::fs;
 use std::path::PathBuf;
-use std::time::{Duration, Instant};
-use tokio::time::sleep;
+use std::time::{Duration, Instant, SystemTime};
+use tokio::time::interval_at;
 use tracing::{debug, info, warn};
 
 use super::events::{HeartbeatEvent, HeartbeatStatus, emit_heartbeat_event, now_ms};
@@ -85,20 +85,64 @@ impl HeartbeatRunner {
         })
     }
 
+    async fn first_delay(&self) -> Duration {
+        // Read last heartbeat event to calibrate first tick time
+        if let Ok(json) = fs::read_to_string(self.config.paths.last_heartbeat()) {
+            if let Ok(event) = serde_json::from_str::<HeartbeatEvent>(&json) {
+                let last_tick_end = std::time::UNIX_EPOCH + Duration::from_millis(event.ts as u64);
+                let last_tick_elapsed = Duration::from_millis(event.duration_ms as u64);
+                let last_tick = last_tick_end - last_tick_elapsed;
+                debug!(
+                    name: "Heartbeat",
+                    "loaded last_tick: {:?} (ts: {}, duration_ms: {})",
+                    last_tick, event.ts, event.duration_ms
+                );
+
+                let next_tick = last_tick + self.interval;
+                let now = SystemTime::now();
+                if now < next_tick {
+                    return next_tick.duration_since(now).unwrap_or(Duration::ZERO);
+                }
+            }
+        }
+
+        // heartbeat is overdue
+        return parse_duration(&self.config.heartbeat.overdue_delay).map_or_else(
+            |e| {
+                warn!(name: "Heartbeat", "invalid overdue_delay: {}, falling back to zero", e);
+                Duration::ZERO
+            },
+            |d| d,
+        );
+    }
+
     /// Run the heartbeat loop continuously
     pub async fn run(&self) -> Result<()> {
+        info!(name: "Heartbeat", "starting runner with interval: {:?}", self.interval);
+
+        // Schedule first tick at next interval from last tick
+        let first_after = self.first_delay().await;
+        let first_at = tokio::time::Instant::now() + first_after;
+        let mut interval = interval_at(first_at, self.interval);
+        interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
         info!(
-            "Starting heartbeat runner with interval: {:?}",
-            self.interval
+            name: "Heartbeat",
+            "first tick scheduled after: {:?} at: {:?}",
+            first_after,
+            first_at,
         );
 
+        // Exponential backoff for SkippedMayTry retries
+        let mut skips_since_last = 0;
+        let skip_retry_base = Duration::from_millis(1000);
+        let skip_retry_max = self.interval / 2;
+
         loop {
-            // Sleep until next interval
-            sleep(self.interval).await;
+            interval.tick().await; // Sleep until next interval
 
             // Check active hours
             if !self.in_active_hours() {
-                debug!("Outside active hours, skipping heartbeat");
+                info!(name: "Heartbeat", "skipping: outside active hours");
                 emit_heartbeat_event(HeartbeatEvent {
                     ts: now_ms(),
                     status: HeartbeatStatus::Skipped,
@@ -111,41 +155,69 @@ impl HeartbeatRunner {
 
             // Run heartbeat with timing
             let start = Instant::now();
-            match self.run_once_internal().await {
+            info!(name: "Heartbeat", "tick starting at: {:?}", start);
+
+            let res = self.run_once_internal().await;
+            let elapsed = start.elapsed();
+            info!(name: "Heartbeat", "tick done elapsed: {:?}", elapsed);
+
+            let event = match res {
                 Ok((response, status)) => {
-                    let duration_ms = start.elapsed().as_millis() as u64;
                     let preview = if response.len() > 200 {
                         Some(format!("{}...", &response[..200]))
                     } else {
                         Some(response.clone())
                     };
 
-                    emit_heartbeat_event(HeartbeatEvent {
+                    if is_heartbeat_ok(&response) {
+                        debug!(name: "Heartbeat", "OK");
+                    } else {
+                        warn!(name: "Heartbeat", "response not OK: {}", response);
+                    }
+
+                    if status == HeartbeatStatus::SkippedMayTry {
+                        skips_since_last += 1;
+                        let retry_after =
+                            (skip_retry_base * 2_u32.pow(skips_since_last)).min(skip_retry_max);
+                        interval.reset_after(retry_after);
+                        info!(name: "Heartbeat", "transient skip, retry quickly after: {:?}", retry_after);
+                    } else {
+                        skips_since_last = 0;
+                    }
+
+                    HeartbeatEvent {
                         ts: now_ms(),
-                        status,
-                        duration_ms,
+                        status: status.clone(),
+                        duration_ms: elapsed.as_millis() as u64,
                         preview,
                         reason: None,
-                    });
-
-                    if is_heartbeat_ok(&response) {
-                        debug!("Heartbeat: OK");
-                    } else {
-                        info!("Heartbeat response: {}", response);
                     }
                 }
                 Err(e) => {
-                    let duration_ms = start.elapsed().as_millis() as u64;
-                    emit_heartbeat_event(HeartbeatEvent {
+                    warn!(name: "Heartbeat", "error: {}", e);
+                    HeartbeatEvent {
                         ts: now_ms(),
                         status: HeartbeatStatus::Failed,
-                        duration_ms,
+                        duration_ms: elapsed.as_millis() as u64,
                         preview: None,
                         reason: Some(e.to_string()),
-                    });
-                    warn!("Heartbeat error: {}", e);
+                    }
+                }
+            };
+
+            // Persist any non-transient heartbeat event to disk
+            if event.status != HeartbeatStatus::SkippedMayTry {
+                if let Err(e) = serde_json::to_writer_pretty(
+                    fs::File::create(self.config.paths.last_heartbeat())?,
+                    &event,
+                ) {
+                    warn!(name: "Heartbeat", "failed to write event: {}", e);
                 }
             }
+
+            emit_heartbeat_event(event);
+
+            info!(name: "Heartbeat", "waiting for next tick");
         }
     }
 
@@ -192,16 +264,22 @@ impl HeartbeatRunner {
         if let Some(ref gate) = self.turn_gate
             && gate.is_busy()
         {
-            debug!("Skipping heartbeat: agent turn in flight (TurnGate busy)");
-            return Ok((HEARTBEAT_OK_TOKEN.to_string(), HeartbeatStatus::Skipped));
+            info!(name: "Heartbeat", "skipping: agent turn in flight (TurnGate busy)");
+            return Ok((
+                HEARTBEAT_OK_TOKEN.to_string(),
+                HeartbeatStatus::SkippedMayTry,
+            ));
         }
 
         // Try to acquire the cross-process workspace lock (non-blocking)
         let _ws_guard = match self.workspace_lock.try_acquire()? {
             Some(guard) => guard,
             None => {
-                debug!("Skipping heartbeat: workspace locked by another process");
-                return Ok((HEARTBEAT_OK_TOKEN.to_string(), HeartbeatStatus::Skipped));
+                info!(name: "Heartbeat", "skipping: workspace locked by another process");
+                return Ok((
+                    HEARTBEAT_OK_TOKEN.to_string(),
+                    HeartbeatStatus::SkippedMayTry,
+                ));
             }
         };
 
@@ -211,8 +289,11 @@ impl HeartbeatRunner {
             match gate.try_acquire() {
                 Some(permit) => Some(permit),
                 None => {
-                    debug!("Skipping heartbeat: agent turn started between check and acquire");
-                    return Ok((HEARTBEAT_OK_TOKEN.to_string(), HeartbeatStatus::Skipped));
+                    info!(name: "Heartbeat", "skipping: agent turn started between check and acquire");
+                    return Ok((
+                        HEARTBEAT_OK_TOKEN.to_string(),
+                        HeartbeatStatus::SkippedMayTry,
+                    ));
                 }
             }
         } else {
@@ -223,13 +304,13 @@ impl HeartbeatRunner {
         let heartbeat_path = self.workspace.join("HEARTBEAT.md");
 
         if !heartbeat_path.exists() {
-            debug!("No HEARTBEAT.md found");
+            info!(name: "Heartbeat", "skipping: no HEARTBEAT.md");
             return Ok((HEARTBEAT_OK_TOKEN.to_string(), HeartbeatStatus::Skipped));
         }
 
         let content = fs::read_to_string(&heartbeat_path)?;
         if content.trim().is_empty() {
-            debug!("HEARTBEAT.md is empty");
+            info!(name: "Heartbeat", "skipping: empty HEARTBEAT.md");
             return Ok((HEARTBEAT_OK_TOKEN.to_string(), HeartbeatStatus::Skipped));
         }
 
@@ -242,6 +323,8 @@ impl HeartbeatRunner {
 
         let mut agent = Agent::new(agent_config, &self.config, self.memory.clone()).await?;
         agent.new_session().await?;
+
+        info!(name: "Heartbeat", "Running HEARTBEAT.md");
 
         // Check if workspace is a git repo
         let workspace_is_git = self.workspace.join(".git").exists();
@@ -263,8 +346,8 @@ impl HeartbeatRunner {
             if let Some(entry) = store.get(session_key)
                 && entry.is_duplicate_heartbeat(&response)
             {
-                debug!(
-                    "Skipping duplicate heartbeat (same text within 24h): {}",
+                info!(name: "Heartbeat",
+                    "skipping: duplicate (same text within 24h): {}",
                     &response[..response.len().min(100)]
                 );
                 return Ok((response, HeartbeatStatus::Skipped));
@@ -275,7 +358,7 @@ impl HeartbeatRunner {
             if let Err(e) = store.load_and_update(session_key, &session_id, |entry| {
                 entry.record_heartbeat(&response);
             }) {
-                warn!("Failed to record heartbeat in session store: {}", e);
+                warn!(name: "Heartbeat", "Failed to record in session store: {}", e);
             }
         }
 
