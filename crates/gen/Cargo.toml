@@ -34,3 +34,7 @@ gltf-json = { version = "1", features = ["names"] }
 
 # Path resolution
 shellexpand = { workspace = true }
+
+# Procedural audio (environmental soundscapes)
+fundsp = "0.20"
+cpal = "0.15"

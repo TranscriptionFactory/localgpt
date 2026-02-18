@@ -21,6 +21,7 @@ pub enum GenEntityType {
     Camera,
     Mesh,
     Group,
+    AudioEmitter,
 }
 
 impl GenEntityType {
@@ -31,6 +32,7 @@ impl GenEntityType {
             Self::Camera => "camera",
             Self::Mesh => "mesh",
             Self::Group => "group",
+            Self::AudioEmitter => "audio_emitter",
         }
     }
 }

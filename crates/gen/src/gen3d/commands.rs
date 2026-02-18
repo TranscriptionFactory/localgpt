@@ -8,6 +8,7 @@ use std::collections::HashMap;
 // ---------------------------------------------------------------------------
 
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub enum GenCommand {
     // Tier 1: Perceive
     SceneInfo,
@@ -47,6 +48,15 @@ pub enum GenCommand {
     LoadGltf {
         path: String,
     },
+
+    // Tier 5: Audio
+    SetAmbience(AmbienceCmd),
+    SpawnAudioEmitter(AudioEmitterCmd),
+    ModifyAudioEmitter(ModifyAudioEmitterCmd),
+    RemoveAudioEmitter {
+        name: String,
+    },
+    AudioInfo,
 }
 
 // ---------------------------------------------------------------------------
@@ -159,10 +169,109 @@ pub struct RawMeshCmd {
 }
 
 // ---------------------------------------------------------------------------
+// Audio command data structures
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AmbienceCmd {
+    pub layers: Vec<AmbienceLayerDef>,
+    pub master_volume: Option<f32>,
+    pub reverb: Option<ReverbParams>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AmbienceLayerDef {
+    pub name: String,
+    pub sound: AmbientSound,
+    pub volume: f32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum AmbientSound {
+    Wind { speed: f32, gustiness: f32 },
+    Rain { intensity: f32 },
+    Forest { bird_density: f32, wind: f32 },
+    Ocean { wave_size: f32 },
+    Cave { drip_rate: f32, resonance: f32 },
+    Stream { flow_rate: f32 },
+    Silence,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AudioEmitterCmd {
+    pub name: String,
+    pub entity: Option<String>,
+    pub position: Option<[f32; 3]>,
+    pub sound: EmitterSound,
+    pub radius: f32,
+    pub volume: f32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum EmitterSound {
+    Water {
+        turbulence: f32,
+    },
+    Fire {
+        intensity: f32,
+        crackle: f32,
+    },
+    Hum {
+        frequency: f32,
+        warmth: f32,
+    },
+    Wind {
+        pitch: f32,
+    },
+    Custom {
+        waveform: WaveformType,
+        filter_cutoff: f32,
+        filter_type: FilterType,
+    },
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum WaveformType {
+    Sine,
+    Saw,
+    Square,
+    WhiteNoise,
+    PinkNoise,
+    BrownNoise,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum FilterType {
+    Lowpass,
+    Highpass,
+    Bandpass,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ReverbParams {
+    pub room_size: f32,
+    pub damping: f32,
+    pub wet: f32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ModifyAudioEmitterCmd {
+    pub name: String,
+    pub volume: Option<f32>,
+    pub radius: Option<f32>,
+    pub sound: Option<EmitterSound>,
+}
+
+// ---------------------------------------------------------------------------
 // Responses (Bevy → agent)
 // ---------------------------------------------------------------------------
 
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub enum GenResponse {
     SceneInfo(SceneInfoData),
     Screenshot { image_path: String },
@@ -175,6 +284,14 @@ pub enum GenResponse {
     EnvironmentSet,
     Exported { path: String },
     GltfLoaded { name: String, path: String },
+
+    // Audio responses
+    AmbienceSet,
+    AudioEmitterSpawned { name: String },
+    AudioEmitterModified { name: String },
+    AudioEmitterRemoved { name: String },
+    AudioInfoData(AudioInfoResponse),
+
     Error { message: String },
 }
 
@@ -211,6 +328,24 @@ pub struct EntityInfoData {
     pub visible: bool,
     pub children: Vec<String>,
     pub parent: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AudioInfoResponse {
+    pub active: bool,
+    pub ambience_layers: Vec<String>,
+    pub emitters: Vec<AudioEmitterSummary>,
+    pub master_volume: f32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AudioEmitterSummary {
+    pub name: String,
+    pub sound_type: String,
+    pub volume: f32,
+    pub radius: f32,
+    pub position: Option<[f32; 3]>,
+    pub attached_to: Option<String>,
 }
 
 // ---------------------------------------------------------------------------

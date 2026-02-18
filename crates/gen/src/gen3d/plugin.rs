@@ -10,6 +10,7 @@ use std::ffi::OsStr;
 use std::path::PathBuf;
 
 use super::GenChannels;
+use super::audio::{self, SpatialAudioListener};
 use super::commands::*;
 use super::registry::*;
 
@@ -117,11 +118,20 @@ pub fn setup_gen_app(
         .init_resource::<PendingScreenshots>()
         .init_resource::<PendingGltfLoads>()
         .init_resource::<FlyCamConfig>()
-        .add_systems(Startup, (setup_default_scene, load_initial_scene))
+        .add_systems(
+            Startup,
+            (
+                setup_default_scene,
+                load_initial_scene,
+                audio::init_audio_engine,
+            ),
+        )
         .add_systems(Update, process_load_gltf_commands)
         .add_systems(Update, process_gen_commands)
         .add_systems(Update, process_pending_screenshots)
         .add_systems(Update, process_pending_gltf_loads)
+        .add_systems(Update, audio::spatial_audio_update)
+        .add_systems(Update, audio::auto_infer_audio)
         .add_systems(Update, fly_cam_movement)
         .add_systems(Update, fly_cam_look)
         .add_systems(Update, fly_cam_scroll_speed);
@@ -160,6 +170,7 @@ fn setup_default_scene(
             Transform::from_translation(Vec3::new(5.0, 5.0, 5.0)).looking_at(Vec3::ZERO, Vec3::Y),
             Name::new("main_camera"),
             FlyCam,
+            SpatialAudioListener,
             GenEntity {
                 entity_type: GenEntityType::Camera,
             },
@@ -221,6 +232,7 @@ fn process_gen_commands(
     mut materials: ResMut<Assets<StandardMaterial>>,
     mut registry: ResMut<NameRegistry>,
     mut pending_screenshots: ResMut<PendingScreenshots>,
+    mut audio_engine: ResMut<audio::AudioEngine>,
     workspace: Res<GenWorkspace>,
     transforms: Query<&Transform>,
     gen_entities: Query<&GenEntity>,
@@ -323,6 +335,19 @@ fn process_gen_commands(
                 // Handled by a separate system
                 continue;
             }
+
+            // Audio commands
+            GenCommand::SetAmbience(cmd) => audio::handle_set_ambience(cmd, &mut audio_engine),
+            GenCommand::SpawnAudioEmitter(cmd) => {
+                audio::handle_spawn_audio_emitter(cmd, &mut audio_engine, &mut commands, &registry)
+            }
+            GenCommand::ModifyAudioEmitter(cmd) => {
+                audio::handle_modify_audio_emitter(cmd, &mut audio_engine)
+            }
+            GenCommand::RemoveAudioEmitter { name } => {
+                audio::handle_remove_audio_emitter(&name, &mut audio_engine)
+            }
+            GenCommand::AudioInfo => audio::handle_audio_info(&audio_engine),
         };
 
         let _ = channel_res.channels.resp_tx.send(response);

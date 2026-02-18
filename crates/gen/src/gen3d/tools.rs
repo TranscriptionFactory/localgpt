@@ -29,7 +29,12 @@ pub fn create_gen_tools(bridge: Arc<GenBridge>) -> Vec<Box<dyn Tool>> {
         Box::new(GenSpawnMeshTool::new(bridge.clone())),
         Box::new(GenLoadGltfTool::new(bridge.clone())),
         Box::new(GenExportScreenshotTool::new(bridge.clone())),
-        Box::new(GenExportGltfTool::new(bridge)),
+        Box::new(GenExportGltfTool::new(bridge.clone())),
+        // Audio tools
+        Box::new(GenSetAmbienceTool::new(bridge.clone())),
+        Box::new(GenAudioEmitterTool::new(bridge.clone())),
+        Box::new(GenModifyAudioTool::new(bridge.clone())),
+        Box::new(GenAudioInfoTool::new(bridge)),
     ]
 }
 
@@ -990,6 +995,315 @@ impl Tool for GenExportGltfTool {
 
         match self.bridge.send(GenCommand::ExportGltf { path }).await? {
             GenResponse::Exported { path } => Ok(format!("Exported scene to: {}", path)),
+            GenResponse::Error { message } => Err(anyhow::anyhow!("{}", message)),
+            other => Err(anyhow::anyhow!("Unexpected response: {:?}", other)),
+        }
+    }
+}
+
+// ===========================================================================
+// gen_set_ambience
+// ===========================================================================
+
+struct GenSetAmbienceTool {
+    bridge: Arc<GenBridge>,
+}
+
+impl GenSetAmbienceTool {
+    fn new(bridge: Arc<GenBridge>) -> Self {
+        Self { bridge }
+    }
+}
+
+#[async_trait]
+impl Tool for GenSetAmbienceTool {
+    fn name(&self) -> &str {
+        "gen_set_ambience"
+    }
+
+    fn schema(&self) -> ToolSchema {
+        ToolSchema {
+            name: "gen_set_ambience".into(),
+            description: "Set the global ambient soundscape. Replaces previous ambience. Each layer is a continuous procedural sound that loops with natural variation.".into(),
+            parameters: json!({
+                "type": "object",
+                "properties": {
+                    "layers": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "name": {"type": "string", "description": "Layer name (e.g., 'wind', 'rain')"},
+                                "sound": {
+                                    "type": "object",
+                                    "description": "Sound type with parameters. Types: wind {speed: 0-1, gustiness: 0-1}, rain {intensity: 0-1}, forest {bird_density: 0-1, wind: 0-1}, ocean {wave_size: 0-1}, cave {drip_rate: 0-1, resonance: 0-1}, stream {flow_rate: 0-1}, silence {}",
+                                    "properties": {
+                                        "type": {"type": "string", "enum": ["wind", "rain", "forest", "ocean", "cave", "stream", "silence"]}
+                                    }
+                                },
+                                "volume": {"type": "number", "minimum": 0, "maximum": 1, "default": 0.5}
+                            },
+                            "required": ["name", "sound"]
+                        },
+                        "description": "Ambient sound layers to mix together"
+                    },
+                    "master_volume": {
+                        "type": "number",
+                        "minimum": 0,
+                        "maximum": 1,
+                        "description": "Master volume for all audio (default: 0.8)"
+                    }
+                },
+                "required": ["layers"]
+            }),
+        }
+    }
+
+    async fn execute(&self, arguments: &str) -> Result<String> {
+        let args: Value = serde_json::from_str(arguments)?;
+
+        let layers_val = args["layers"]
+            .as_array()
+            .ok_or_else(|| anyhow::anyhow!("Missing layers array"))?;
+
+        let mut layers = Vec::new();
+        for layer_val in layers_val {
+            let name = layer_val["name"].as_str().unwrap_or("unnamed").to_string();
+            let sound: AmbientSound = serde_json::from_value(layer_val["sound"].clone())?;
+            let volume = layer_val["volume"].as_f64().unwrap_or(0.5) as f32;
+            layers.push(AmbienceLayerDef {
+                name,
+                sound,
+                volume,
+            });
+        }
+
+        let master_volume = args["master_volume"].as_f64().map(|v| v as f32);
+
+        let cmd = AmbienceCmd {
+            layers,
+            master_volume,
+            reverb: None,
+        };
+
+        match self.bridge.send(GenCommand::SetAmbience(cmd)).await? {
+            GenResponse::AmbienceSet => Ok("Ambient soundscape set".to_string()),
+            GenResponse::Error { message } => Err(anyhow::anyhow!("{}", message)),
+            other => Err(anyhow::anyhow!("Unexpected response: {:?}", other)),
+        }
+    }
+}
+
+// ===========================================================================
+// gen_audio_emitter
+// ===========================================================================
+
+struct GenAudioEmitterTool {
+    bridge: Arc<GenBridge>,
+}
+
+impl GenAudioEmitterTool {
+    fn new(bridge: Arc<GenBridge>) -> Self {
+        Self { bridge }
+    }
+}
+
+#[async_trait]
+impl Tool for GenAudioEmitterTool {
+    fn name(&self) -> &str {
+        "gen_audio_emitter"
+    }
+
+    fn schema(&self) -> ToolSchema {
+        ToolSchema {
+            name: "gen_audio_emitter".into(),
+            description: "Create a spatial audio emitter. Sound gets louder as camera approaches and quieter when far away. Can attach to an existing entity or specify a position.".into(),
+            parameters: json!({
+                "type": "object",
+                "properties": {
+                    "name": {
+                        "type": "string",
+                        "description": "Unique name for this audio emitter"
+                    },
+                    "entity": {
+                        "type": "string",
+                        "description": "Name of existing entity to attach sound to"
+                    },
+                    "position": {
+                        "type": "array",
+                        "items": {"type": "number"},
+                        "description": "Position [x, y, z] for standalone emitter (ignored if entity is specified)"
+                    },
+                    "sound": {
+                        "type": "object",
+                        "description": "Sound type. Types: water {turbulence: 0-1}, fire {intensity: 0-1, crackle: 0-1}, hum {frequency: Hz, warmth: 0-1}, wind {pitch: Hz}, custom {waveform: sine/saw/square/white_noise/pink_noise/brown_noise, filter_cutoff: Hz, filter_type: lowpass/highpass/bandpass}",
+                        "properties": {
+                            "type": {"type": "string", "enum": ["water", "fire", "hum", "wind", "custom"]}
+                        }
+                    },
+                    "radius": {
+                        "type": "number",
+                        "default": 10.0,
+                        "description": "Maximum audible distance from emitter"
+                    },
+                    "volume": {
+                        "type": "number",
+                        "minimum": 0,
+                        "maximum": 1,
+                        "default": 0.7,
+                        "description": "Base volume at closest distance"
+                    }
+                },
+                "required": ["name", "sound"]
+            }),
+        }
+    }
+
+    async fn execute(&self, arguments: &str) -> Result<String> {
+        let args: Value = serde_json::from_str(arguments)?;
+
+        let name = args["name"]
+            .as_str()
+            .ok_or_else(|| anyhow::anyhow!("Missing name"))?
+            .to_string();
+
+        let sound: EmitterSound = serde_json::from_value(args["sound"].clone())?;
+
+        let cmd = AudioEmitterCmd {
+            name,
+            entity: args["entity"].as_str().map(|s| s.to_string()),
+            position: parse_opt_f32_array(&args["position"]),
+            sound,
+            radius: args["radius"].as_f64().unwrap_or(10.0) as f32,
+            volume: args["volume"].as_f64().unwrap_or(0.7) as f32,
+        };
+
+        match self.bridge.send(GenCommand::SpawnAudioEmitter(cmd)).await? {
+            GenResponse::AudioEmitterSpawned { name } => {
+                Ok(format!("Audio emitter '{}' created", name))
+            }
+            GenResponse::Error { message } => Err(anyhow::anyhow!("{}", message)),
+            other => Err(anyhow::anyhow!("Unexpected response: {:?}", other)),
+        }
+    }
+}
+
+// ===========================================================================
+// gen_modify_audio
+// ===========================================================================
+
+struct GenModifyAudioTool {
+    bridge: Arc<GenBridge>,
+}
+
+impl GenModifyAudioTool {
+    fn new(bridge: Arc<GenBridge>) -> Self {
+        Self { bridge }
+    }
+}
+
+#[async_trait]
+impl Tool for GenModifyAudioTool {
+    fn name(&self) -> &str {
+        "gen_modify_audio"
+    }
+
+    fn schema(&self) -> ToolSchema {
+        ToolSchema {
+            name: "gen_modify_audio".into(),
+            description: "Modify an existing audio emitter's volume, radius, or sound parameters."
+                .into(),
+            parameters: json!({
+                "type": "object",
+                "properties": {
+                    "name": {
+                        "type": "string",
+                        "description": "Name of audio emitter to modify"
+                    },
+                    "volume": {
+                        "type": "number",
+                        "minimum": 0,
+                        "maximum": 1,
+                        "description": "New base volume"
+                    },
+                    "radius": {
+                        "type": "number",
+                        "description": "New audible radius"
+                    },
+                    "sound": {
+                        "type": "object",
+                        "description": "New sound type (replaces current)"
+                    }
+                },
+                "required": ["name"]
+            }),
+        }
+    }
+
+    async fn execute(&self, arguments: &str) -> Result<String> {
+        let args: Value = serde_json::from_str(arguments)?;
+
+        let cmd = ModifyAudioEmitterCmd {
+            name: args["name"]
+                .as_str()
+                .ok_or_else(|| anyhow::anyhow!("Missing name"))?
+                .to_string(),
+            volume: args["volume"].as_f64().map(|v| v as f32),
+            radius: args["radius"].as_f64().map(|v| v as f32),
+            sound: args
+                .get("sound")
+                .and_then(|v| serde_json::from_value(v.clone()).ok()),
+        };
+
+        match self
+            .bridge
+            .send(GenCommand::ModifyAudioEmitter(cmd))
+            .await?
+        {
+            GenResponse::AudioEmitterModified { name } => {
+                Ok(format!("Audio emitter '{}' modified", name))
+            }
+            GenResponse::Error { message } => Err(anyhow::anyhow!("{}", message)),
+            other => Err(anyhow::anyhow!("Unexpected response: {:?}", other)),
+        }
+    }
+}
+
+// ===========================================================================
+// gen_audio_info
+// ===========================================================================
+
+struct GenAudioInfoTool {
+    bridge: Arc<GenBridge>,
+}
+
+impl GenAudioInfoTool {
+    fn new(bridge: Arc<GenBridge>) -> Self {
+        Self { bridge }
+    }
+}
+
+#[async_trait]
+impl Tool for GenAudioInfoTool {
+    fn name(&self) -> &str {
+        "gen_audio_info"
+    }
+
+    fn schema(&self) -> ToolSchema {
+        ToolSchema {
+            name: "gen_audio_info".into(),
+            description: "Get current audio state: active layers, emitters with positions/volumes."
+                .into(),
+            parameters: json!({
+                "type": "object",
+                "properties": {}
+            }),
+        }
+    }
+
+    async fn execute(&self, _arguments: &str) -> Result<String> {
+        match self.bridge.send(GenCommand::AudioInfo).await? {
+            GenResponse::AudioInfoData(data) => Ok(serde_json::to_string_pretty(&data)?),
             GenResponse::Error { message } => Err(anyhow::anyhow!("{}", message)),
             other => Err(anyhow::anyhow!("Unexpected response: {:?}", other)),
         }

@@ -5,6 +5,8 @@
 //!
 //! Architecture: Agent loop (tokio) ←mpsc channels→ Bevy App (main thread)
 
+pub mod audio;
+pub mod audio_graphs;
 pub mod commands;
 pub mod plugin;
 pub mod registry;
