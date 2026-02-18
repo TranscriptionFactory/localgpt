@@ -40,6 +40,7 @@ pub fn create_safe_tools(
     config: &Config,
     memory: Option<Arc<MemoryManager>>,
 ) -> Result<Vec<Box<dyn Tool>>> {
+    use super::hardcoded_filters;
     use super::tool_filters::CompiledToolFilter;
 
     let workspace = config.workspace_path();
@@ -51,14 +52,19 @@ pub fn create_safe_tools(
         Box::new(MemorySearchTool::new(workspace.clone()))
     };
 
-    // Compile web_fetch filter from user config (SSRF protection is handled
-    // by validate_web_fetch_url() which does DNS-resolution-based IP checking)
+    // Compile web_fetch filter from user config and merge small hardcoded
+    // fail-fast deny rules (authoritative SSRF protection is still handled by
+    // validate_web_fetch_url() with host parsing + DNS/IP checks).
     let web_fetch_filter = config
         .tools
         .filters
         .get("web_fetch")
         .map(CompiledToolFilter::compile)
-        .unwrap_or_else(|| Ok(CompiledToolFilter::permissive()))?;
+        .unwrap_or_else(|| Ok(CompiledToolFilter::permissive()))?
+        .merge_hardcoded(
+            hardcoded_filters::WEB_FETCH_DENY_SUBSTRINGS,
+            hardcoded_filters::WEB_FETCH_DENY_PATTERNS,
+        )?;
 
     let mut tools: Vec<Box<dyn Tool>> = vec![
         memory_search_tool,
@@ -66,7 +72,7 @@ pub fn create_safe_tools(
         Box::new(WebFetchTool::new(
             config.tools.web_fetch_max_bytes,
             web_fetch_filter,
-        )),
+        )?),
     ];
 
     // Conditionally add web search tool
@@ -449,6 +455,29 @@ async fn validate_web_fetch_url(url: &str) -> Result<reqwest::Url> {
     Ok(parsed)
 }
 
+const MAX_WEB_FETCH_REDIRECTS: usize = 10;
+
+fn should_follow_redirect(status: reqwest::StatusCode) -> bool {
+    matches!(
+        status,
+        reqwest::StatusCode::MOVED_PERMANENTLY
+            | reqwest::StatusCode::FOUND
+            | reqwest::StatusCode::SEE_OTHER
+            | reqwest::StatusCode::TEMPORARY_REDIRECT
+            | reqwest::StatusCode::PERMANENT_REDIRECT
+    )
+}
+
+async fn resolve_and_validate_redirect_target(
+    current: &reqwest::Url,
+    location: &str,
+) -> Result<reqwest::Url> {
+    let candidate = current
+        .join(location)
+        .map_err(|e| anyhow::anyhow!("Invalid redirect target '{}': {}", location, e))?;
+    validate_web_fetch_url(candidate.as_str()).await
+}
+
 fn extract_fallback_text(html: &str) -> String {
     static SCRIPT_RE: Lazy<Regex> =
         Lazy::new(|| Regex::new(r"(?is)<script[^>]*>.*?</script>").expect("valid script regex"));
@@ -495,12 +524,65 @@ pub struct WebFetchTool {
 }
 
 impl WebFetchTool {
-    pub fn new(max_bytes: usize, filter: super::tool_filters::CompiledToolFilter) -> Self {
-        Self {
-            client: reqwest::Client::new(),
+    pub fn new(max_bytes: usize, filter: super::tool_filters::CompiledToolFilter) -> Result<Self> {
+        let client = reqwest::Client::builder()
+            .redirect(reqwest::redirect::Policy::none())
+            .build()?;
+
+        Ok(Self {
+            client,
             max_bytes,
             filter,
+        })
+    }
+
+    async fn fetch_with_validated_redirects(
+        &self,
+        mut current_url: reqwest::Url,
+    ) -> Result<(reqwest::Response, reqwest::Url)> {
+        for redirect_count in 0..=MAX_WEB_FETCH_REDIRECTS {
+            let response = self
+                .client
+                .get(current_url.clone())
+                .header("User-Agent", "LocalGPT/0.1")
+                .send()
+                .await?;
+
+            if !should_follow_redirect(response.status()) {
+                return Ok((response, current_url));
+            }
+
+            if redirect_count == MAX_WEB_FETCH_REDIRECTS {
+                anyhow::bail!(
+                    "Too many redirects (>{}) while fetching {}",
+                    MAX_WEB_FETCH_REDIRECTS,
+                    current_url
+                );
+            }
+
+            let location = response
+                .headers()
+                .get(reqwest::header::LOCATION)
+                .ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "Redirect response {} missing Location header",
+                        response.status()
+                    )
+                })?
+                .to_str()
+                .map_err(|_| anyhow::anyhow!("Redirect Location header is not valid UTF-8"))?;
+
+            let next_url = resolve_and_validate_redirect_target(&current_url, location).await?;
+            debug!(
+                "Following redirect {}: {} -> {}",
+                redirect_count + 1,
+                current_url,
+                next_url
+            );
+            current_url = next_url;
         }
+
+        unreachable!("redirect loop should return or bail")
     }
 }
 
@@ -539,12 +621,7 @@ impl Tool for WebFetchTool {
         let parsed_url = validate_web_fetch_url(url).await?;
         debug!("Fetching URL: {}", parsed_url);
 
-        let response = self
-            .client
-            .get(parsed_url.clone())
-            .header("User-Agent", "LocalGPT/0.1")
-            .send()
-            .await?;
+        let (response, final_url) = self.fetch_with_validated_redirects(parsed_url).await?;
 
         let status = response.status();
         let content_type = response
@@ -556,7 +633,7 @@ impl Tool for WebFetchTool {
         let body = response.text().await?;
         let extracted =
             if content_type.contains("text/html") || content_type.contains("application/xhtml") {
-                extract_readable_text(&body, &parsed_url)
+                extract_readable_text(&body, &final_url)
             } else {
                 body
             };
@@ -575,7 +652,7 @@ impl Tool for WebFetchTool {
 
         Ok(format!(
             "Status: {}\nURL: {}\nContent-Type: {}\n\n{}",
-            status, parsed_url, content_type, truncated
+            status, final_url, content_type, truncated
         ))
     }
 }
@@ -654,5 +731,32 @@ mod tests {
         let text = extract_readable_text(html, &url);
         assert!(text.contains("Hello world"));
         assert!(!text.contains("alert(1)"));
+    }
+
+    #[tokio::test]
+    async fn test_redirect_target_validation_blocks_private_ip() {
+        let current = reqwest::Url::parse("https://93.184.216.34/start").unwrap();
+        let err = resolve_and_validate_redirect_target(&current, "http://127.0.0.1/admin").await;
+        assert!(err.is_err());
+        let msg = err.unwrap_err().to_string();
+        assert!(msg.contains("private IP"));
+    }
+
+    #[tokio::test]
+    async fn test_redirect_target_validation_allows_relative_public_ip_target() {
+        let current = reqwest::Url::parse("https://93.184.216.34/start").unwrap();
+        let next = resolve_and_validate_redirect_target(&current, "/next")
+            .await
+            .unwrap();
+        assert_eq!(next.as_str(), "https://93.184.216.34/next");
+    }
+
+    #[tokio::test]
+    async fn test_redirect_target_validation_blocks_non_http_scheme() {
+        let current = reqwest::Url::parse("https://93.184.216.34/start").unwrap();
+        let err = resolve_and_validate_redirect_target(&current, "file:///etc/passwd").await;
+        assert!(err.is_err());
+        let msg = err.unwrap_err().to_string();
+        assert!(msg.contains("Only http/https"));
     }
 }
