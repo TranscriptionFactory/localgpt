@@ -167,7 +167,7 @@ localgpt sandbox test     # Run smoke tests
 
 ### Signed Security Policy (LocalGPT.md)
 
-Place a `LocalGPT.md` in your workspace to add custom rules (e.g. "never execute `rm -rf`"). The file is HMAC-SHA256 signed with a device-local key so the agent cannot tamper with it:
+Place a `LocalGPT.md` in your workspace to add custom rules (e.g. "never execute `rm -rf`"). The file is HMAC-SHA256 signed with a device-local key so tampering will be detected:
 
 ```bash
 localgpt md sign     # Sign policy with device key
@@ -176,7 +176,7 @@ localgpt md status   # Show security posture
 localgpt md audit    # View security event log
 ```
 
-Verification runs at every session start. If the file is unsigned, missing, or tampered with, LocalGPT falls back to its hardcoded security suffix — it never operates with a compromised policy.
+Verification runs at every session start. If the file is unsigned, missing, or tampered with, LocalGPT falls back to its hardcoded security suffix — it never operates with a compromised LocalGPT.md.
 
 ### Prompt Injection Defenses
 
@@ -281,6 +281,28 @@ LocalGPT includes a Proof of Concept for running the desktop Egui UI in the brow
 **Try it**: After building the WASM UI with `./build-egui-web.sh`, visit `http://localhost:31327/egui`
 
 See [`docs/egui-web-poc.md`](docs/egui-web-poc.md) for details on architecture, benefits, tradeoffs, and implementation.
+
+## Gen Mode (World Generation)
+
+`Gen` is currently shipped as a separate binary: `localgpt-gen` (not a `localgpt gen` subcommand).
+
+```bash
+# Install from this repo
+cargo install --path crates/gen
+
+# Start interactive Gen mode
+localgpt-gen
+
+# Start with an initial prompt
+localgpt-gen "Create a low-poly forest scene with a path and warm lighting"
+
+# Start from an existing glTF/GLB scene
+localgpt-gen --scene ./scene.glb
+```
+
+`localgpt-gen` runs a Bevy window on the main thread and an agent loop in the background. It supports scene inspection, primitive spawning/modification, glTF load/export, and scene export to `.glb`.
+
+Current limitation: screenshot capture is wired but still placeholder-level in the Bevy plugin (path is returned; full pixel capture is not finished yet).
 
 ## Blog
 
