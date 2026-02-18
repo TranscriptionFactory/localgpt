@@ -20,11 +20,14 @@ A local device focused AI assistant built in Rust — persistent memory, autonom
 ## Install
 
 ```bash
-# Full install (includes desktop GUI)
+# From crates.io (includes desktop GUI)
 cargo install localgpt
 
 # Headless (no desktop GUI — for servers, Docker, CI)
 cargo install localgpt --no-default-features
+
+# From source checkout
+cargo install --path crates/cli
 ```
 
 ## Quick Start
@@ -39,16 +42,21 @@ localgpt chat
 # Ask a single question
 localgpt ask "What is the meaning of life?"
 
+# Inspect resolved config/data/state/cache paths
+localgpt paths
+
 # Run as a daemon with heartbeat, HTTP API and web ui
 localgpt daemon start
 ```
 
 ## How It Works
 
-LocalGPT uses plain markdown files as its memory:
+LocalGPT uses XDG-compliant directories (or platform equivalents) for config/data/state/cache. Run `localgpt paths` to see your resolved paths.
+
+Workspace memory layout:
 
 ```
-~/.localgpt/workspace/
+<data_dir>/workspace/
 ├── MEMORY.md            # Long-term knowledge (auto-loaded each session)
 ├── HEARTBEAT.md         # Autonomous task queue
 ├── SOUL.md              # Personality and behavioral guidance
@@ -58,11 +66,11 @@ LocalGPT uses plain markdown files as its memory:
     └── tech/
 ```
 
-Files are indexed with SQLite FTS5 for fast keyword search, and sqlite-vec for semantic search with local embeddings 
+Files are indexed with SQLite FTS5 for fast keyword search, and sqlite-vec for semantic search with local embeddings.
 
 ## Configuration
 
-Stored at `~/.localgpt/config.toml`:
+Stored at `<config_dir>/config.toml` (run `localgpt config path` or `localgpt paths`):
 
 ```toml
 [agent]
@@ -77,7 +85,7 @@ interval = "30m"
 active_hours = { start = "09:00", end = "22:00" }
 
 [memory]
-workspace = "~/.localgpt/workspace"
+workspace = "~/.local/share/localgpt/workspace" # optional override
 
 # Optional: Telegram bot
 [telegram]
@@ -90,7 +98,7 @@ api_token = "${TELEGRAM_BOT_TOKEN}"
 If you run a local server that speaks the OpenAI API (e.g., LM Studio, llamafile, vLLM), point LocalGPT at it and pick an `openai/*` model ID so it does **not** try to spawn the `claude` CLI:
 
 1. Start your server (LM Studio default port: `1234`; llamafile default: `8080`) and note its model name.
-2. Edit `~/.localgpt/config.toml`:
+2. Edit your config file (`localgpt config path`):
    ```toml
    [agent]
    default_model = "openai/<your-model-name>"
@@ -175,11 +183,11 @@ Verification runs at every session start. If the file is unsigned, missing, or t
 - **Marker stripping** — known LLM control tokens (`<|im_start|>`, `[INST]`, `<<SYS>>`, etc.) are stripped from tool outputs
 - **Pattern detection** — regex scanning for injection phrases ("ignore previous instructions", "you are now a", etc.) with warnings surfaced to the user
 - **Content boundaries** — all external content is wrapped in XML delimiters (`<tool_output>`, `<memory_context>`, `<external_content>`) so the model can distinguish data from instructions
-- **Protected files** — the agent is blocked from writing to `LocalGPT.md`, `.localgpt_manifest.json`, `.device_key`, and the audit log
+- **Protected files** — the agent is blocked from writing to `LocalGPT.md`, `.localgpt_manifest.json`, `IDENTITY.md`, `localgpt.device.key`, and `localgpt.audit.jsonl`
 
 ### Audit Chain
 
-All security events (signing, verification, tamper detection, blocked writes) are logged to an append-only, hash-chained audit file at `~/.localgpt/.security_audit.jsonl`. Each entry contains the SHA-256 of the previous entry, making retroactive modification detectable.
+All security events (signing, verification, tamper detection, blocked writes) are logged to an append-only, hash-chained audit file at `<state_dir>/localgpt.audit.jsonl`. Each entry contains the SHA-256 of the previous entry, making retroactive modification detectable.
 
 ```bash
 localgpt md audit               # View audit log
@@ -192,17 +200,25 @@ localgpt md audit --filter=tamper_detected
 ```bash
 # Chat
 localgpt chat                     # Interactive chat
+localgpt chat --resume            # Resume most recent session
 localgpt chat --session <id>      # Resume session
 localgpt ask "question"           # Single question
+localgpt ask -f json "question"   # JSON output
+
+# Desktop GUI (default build)
+localgpt desktop
 
 # Daemon
 localgpt daemon start             # Start background daemon
+localgpt daemon start --foreground
+localgpt daemon restart           # Restart daemon
 localgpt daemon stop              # Stop daemon
 localgpt daemon status            # Show status
 localgpt daemon heartbeat         # Run one heartbeat cycle
 
 # Memory
 localgpt memory search "query"    # Search memory
+localgpt memory recent            # List recent entries
 localgpt memory reindex           # Reindex files
 localgpt memory stats             # Show statistics
 
@@ -221,6 +237,12 @@ localgpt sandbox test             # Run sandbox smoke tests
 # Config
 localgpt config init              # Create default config
 localgpt config show              # Show current config
+localgpt config get agent.default_model
+localgpt config set logging.level debug
+localgpt config path
+
+# Paths
+localgpt paths                    # Show resolved XDG/platform paths
 ```
 
 ## HTTP API
@@ -229,11 +251,28 @@ When the daemon is running:
 
 | Endpoint | Description |
 |----------|-------------|
+| `GET /` | Embedded web UI |
 | `GET /health` | Health check |
 | `GET /api/status` | Server status |
+| `GET /api/config` | Effective config summary |
+| `GET /api/heartbeat/status` | Last heartbeat status/event |
+| `POST /api/sessions` | Create session |
+| `GET /api/sessions` | List active in-memory sessions |
+| `GET /api/sessions/{session_id}` | Session status |
+| `DELETE /api/sessions/{session_id}` | Delete session |
+| `GET /api/sessions/{session_id}/messages` | Session transcript/messages |
+| `POST /api/sessions/{session_id}/compact` | Compact session history |
+| `POST /api/sessions/{session_id}/clear` | Clear session history |
+| `POST /api/sessions/{session_id}/model` | Switch model for session |
 | `POST /api/chat` | Chat with the assistant |
+| `POST /api/chat/stream` | SSE streaming chat |
+| `GET /api/ws` | WebSocket chat endpoint |
 | `GET /api/memory/search?q=<query>` | Search memory |
 | `GET /api/memory/stats` | Memory statistics |
+| `POST /api/memory/reindex` | Trigger memory reindex |
+| `GET /api/saved-sessions` | List persisted sessions |
+| `GET /api/saved-sessions/{session_id}` | Get persisted session |
+| `GET /api/logs/daemon` | Tail daemon logs |
 
 ### Egui Web UI (PoC)
 
