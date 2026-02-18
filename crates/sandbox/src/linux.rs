@@ -16,10 +16,10 @@ pub fn apply_sandbox(policy: &SandboxPolicy) -> Result<(), String> {
     }
 
     // 3. Apply seccomp network deny filter (must be last)
-    if policy.network == NetworkPolicy::Deny {
-        if let Err(e) = apply_seccomp_network_deny() {
-            eprintln!("localgpt-sandbox: seccomp not applied: {}", e);
-        }
+    if policy.network == NetworkPolicy::Deny
+        && let Err(e) = apply_seccomp_network_deny()
+    {
+        eprintln!("localgpt-sandbox: seccomp not applied: {}", e);
     }
 
     Ok(())
@@ -67,26 +67,26 @@ fn apply_landlock(policy: &SandboxPolicy) -> Result<(), String> {
 
     // Read-only paths (system dirs)
     for path in &policy.read_only_paths {
-        if path.exists() {
-            if let Ok(fd) = PathFd::new(path) {
-                let _ = (&mut ruleset).add_rule(PathBeneath::new(fd, read_access));
-            }
+        if path.exists()
+            && let Ok(fd) = PathFd::new(path)
+        {
+            let _ = (&mut ruleset).add_rule(PathBeneath::new(fd, read_access));
         }
     }
 
     // Workspace — read+write
-    if policy.workspace_path.exists() {
-        if let Ok(fd) = PathFd::new(&policy.workspace_path) {
-            let _ = (&mut ruleset).add_rule(PathBeneath::new(fd, write_access));
-        }
+    if policy.workspace_path.exists()
+        && let Ok(fd) = PathFd::new(&policy.workspace_path)
+    {
+        let _ = (&mut ruleset).add_rule(PathBeneath::new(fd, write_access));
     }
 
     // Extra writable paths (/tmp, user-configured)
     for path in &policy.extra_write_paths {
-        if path.exists() {
-            if let Ok(fd) = PathFd::new(path) {
-                let _ = (&mut ruleset).add_rule(PathBeneath::new(fd, write_access));
-            }
+        if path.exists()
+            && let Ok(fd) = PathFd::new(path)
+        {
+            let _ = (&mut ruleset).add_rule(PathBeneath::new(fd, write_access));
         }
     }
 
