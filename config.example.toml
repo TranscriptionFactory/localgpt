@@ -202,13 +202,38 @@ bind = "127.0.0.1"
 # api_token = "${TELEGRAM_BOT_TOKEN}"
 
 [security]
+# LocalGPT injects a security block at the end of every LLM context window.
+# The block has two independent layers:
+#
+#   1. User policy (LocalGPT.md) — your custom instructions, cryptographically
+#      signed and verified. Injected as "## Workspace Security Policy" header
+#      followed by your content. Requires `localgpt md sign` after editing.
+#
+#   2. Hardcoded suffix — a compiled-in security reminder that tells the model
+#      to treat tool outputs and retrieved content as data, not instructions.
+#      This is the last thing the model sees before generating a response.
+#
+# Both are concatenated into the last user message on every API call.
+# They are NOT saved to session logs or included in compaction.
+#
+# You can disable each layer independently:
+
 # Abort on tamper or suspicious content in LocalGPT.md (default: false)
+# When true, TamperDetected and SuspiciousContent are fatal errors that
+# prevent the agent from starting. When false, the agent warns and falls
+# back to hardcoded suffix only.
 # strict_policy = false
 
 # Skip loading the LocalGPT.md workspace security policy (default: false)
+# The hardcoded suffix still applies unless also disabled.
 # disable_policy = false
 
-# Skip the hardcoded security suffix injected at end of context (default: false)
+# Skip the hardcoded security suffix (default: false)
+# The user policy still applies unless also disabled.
+# WARNING: Disabling both disable_policy and disable_suffix removes all
+# end-of-context security reinforcement. The system prompt safety section
+# still exists but may lose effectiveness in long sessions due to the
+# "lost in the middle" attention decay.
 # disable_suffix = false
 
 [logging]

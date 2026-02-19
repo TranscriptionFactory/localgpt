@@ -191,7 +191,7 @@ pub struct PerplexityConfig {
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct SecurityConfig {
-    /// Abort agent startup on tamper or suspicious content (default: false)
+    /// Abort agent startup on tamper or suspicious content (default: false).
     ///
     /// When true, `TamperDetected` and `SuspiciousContent` are fatal errors
     /// that prevent the agent from starting. When false (default), the agent
@@ -199,11 +199,25 @@ pub struct SecurityConfig {
     #[serde(default)]
     pub strict_policy: bool,
 
-    /// Skip loading and injecting the LocalGPT.md security policy (default: false)
+    /// Skip loading and injecting the `LocalGPT.md` workspace security policy
+    /// (default: false).
+    ///
+    /// When true, the user's signed `LocalGPT.md` content is not loaded or
+    /// injected into the context window. The hardcoded security suffix still
+    /// applies unless [`disable_suffix`] is also set.
     #[serde(default)]
     pub disable_policy: bool,
 
-    /// Skip injecting the hardcoded security suffix (default: false)
+    /// Skip injecting the hardcoded security suffix (default: false).
+    ///
+    /// The suffix is a compiled-in reminder that tells the model to treat
+    /// tool outputs and retrieved content as data, not instructions. When
+    /// disabled, the user policy (if any) still applies.
+    ///
+    /// **Warning:** Setting both `disable_policy` and `disable_suffix` to
+    /// `true` removes all end-of-context security reinforcement. The system
+    /// prompt safety section still exists, but may lose effectiveness in
+    /// long sessions due to attention decay ("lost in the middle" effect).
     #[serde(default)]
     pub disable_suffix: bool,
 

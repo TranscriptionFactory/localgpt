@@ -435,14 +435,28 @@ The security block is **injected on every API call**, not stored in conversation
 
 **Message array structure per API call:**
 
+The security block is **concatenated into the last user or tool-result message** (separated by `\n\n`) rather than appended as a separate user message. This avoids consecutive same-role messages, which violates the Anthropic Messages API protocol.
+
 ```
-Turn 1:  [system_prompt] [user_1] [security_block] → generate
-Turn 3:  [system_prompt] [user_1] [asst_1] [user_2] [asst_2] [user_3] [security_block] → generate
-Turn N:  [system_prompt] [msg_1 ... msg_2N-1] [user_N] [security_block] → generate
-                                                                ↑ always last
+Turn 1:  [system_prompt] [user_1 + security_block] → generate
+Turn 3:  [system_prompt] [user_1] [asst_1] [user_2] [asst_2] [user_3 + security_block] → generate
+Tool:    [system_prompt] [...] [asst_N (tool_call)] [tool_result + security_block] → generate
+                                                                    ↑ always last in context
 ```
 
+If the last message is neither User nor Tool (edge case: Assistant or System), the security block falls back to a separate User message.
+
 The security block is a synthetic injection. It is not persisted in `session.rs` conversation history, not included in session compaction/summarization, and not visible to the user.
+
+Both layers can be independently disabled via `config.toml`:
+
+```toml
+[security]
+disable_policy = true   # skip LocalGPT.md content
+disable_suffix = true   # skip hardcoded reminder
+```
+
+When both are disabled, `build_ending_security_block()` returns an empty string and no injection occurs.
 
 **Token budget:** Hardcoded suffix ≈80 tokens (always included, non-negotiable). User policy ≤1000 tokens. Total ≈1080 tokens per turn. Over a 30-turn session this consumes ~32K tokens — about 27% of `reserve_tokens` (8000) should be allocated for the security block to prevent it from being dropped during context window management.
 
@@ -514,32 +528,40 @@ self.verified_security_policy = match &policy {
 };
 ```
 
-**At every API call** (`build_messages_for_api_call()`) — inject fresh:
+**At every API call** (`messages_for_api_call()`) — inject fresh:
 
 ```rust
-fn build_messages_for_api_call(&self) -> Vec<Message> {
-    let mut messages = Vec::new();
+fn messages_for_api_call(&self) -> Vec<Message> {
+    let mut messages = self.session.messages_for_llm();
 
-    // System prompt (primacy position — includes safety preamble)
-    messages.push(Message::system(&self.system_prompt));
+    let include_suffix = !self.app_config.security.disable_suffix;
+    let policy = if self.app_config.security.disable_policy {
+        None
+    } else {
+        self.verified_security_policy.as_deref()
+    };
 
-    // Conversation history (stored turns only, no synthetic messages)
-    for turn in &self.conversation_history {
-        messages.push(turn.clone());
+    let security_block = build_ending_security_block(policy, include_suffix);
+
+    if !security_block.is_empty() {
+        // Concatenate into the last User or Tool message to avoid
+        // consecutive same-role messages (Anthropic API requirement).
+        if let Some(last) = messages.last_mut()
+            && matches!(last.role, Role::User | Role::Tool)
+        {
+            last.content.push_str("\n\n");
+            last.content.push_str(&security_block);
+        } else {
+            // Fallback: no messages or last message is Assistant/System
+            messages.push(Message::user(&security_block));
+        }
     }
-
-    // Security block (recency position — always last before generation)
-    // Appended to the last user message or as a trailing user message
-    let security = build_ending_security_block(
-        self.verified_security_policy.as_deref(),
-    );
-    messages.push(Message::user(&security));
 
     messages
 }
 ```
 
-**Note:** The security block is injected as a `user`-role message (or appended to the final user message content) because some providers do not support interleaved `system` messages, and user-role content at the end receives strong recency attention regardless of role.
+**Note:** The security block is concatenated into the last user/tool message content rather than appended as a separate user message. This avoids consecutive same-role messages (which violates the Anthropic Messages API protocol) while keeping the security text in the recency position.
 
 ---
 
