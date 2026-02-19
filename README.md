@@ -1,6 +1,13 @@
 
 # <img src="https://localgpt.app/logo/localgpt-icon-app.png" width="50" height="50" alt="LocalGPT" /> LocalGPT
 
+[![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](https://github.com/localgpt-app/localgpt#license)
+[![Crates.io](https://img.shields.io/crates/v/localgpt.svg)](https://crates.io/crates/localgpt)
+[![Downloads](https://img.shields.io/crates/d/localgpt.svg)](https://crates.io/crates/localgpt)
+[![Docs](https://docs.rs/localgpt/badge.svg)](https://docs.rs/localgpt/latest/localgpt)
+[![CI](https://github.com/localgpt-app/localgpt/workflows/CI/badge.svg)](https://github.com/localgpt-app/localgpt/actions)
+[![Discord](https://img.shields.io/discord/691052431525675048.svg?label=&logo=discord&logoColor=ffffff&color=7389D8&labelColor=6A7EC2)](https://discord.gg/yMQ8tfxG)
+
 A local device focused AI assistant built in Rust — persistent memory, autonomous tasks. Inspired by and compatible with OpenClaw.
 
 `cargo install localgpt`
@@ -320,6 +327,8 @@ localgpt-gen --agent my-gen-agent
 ```
 
 `localgpt-gen` runs a Bevy window (1280x720) on the main thread and an agent loop on a background tokio runtime. The agent gets safe tools (memory, web) plus Gen-specific tools (spawn/modify entities, scene inspection, glTF export). Type `/quit` or `/exit` in the terminal to close.
+
+Built something cool with Gen? Share your creation on [Discord](https://discord.gg/yMQ8tfxG)!
 
 ## Blog
 
