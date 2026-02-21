@@ -158,6 +158,7 @@ pub fn build_system_prompt(params: SystemPromptParams) -> String {
         SILENT_REPLY_TOKEN
     ));
     lines.push("- Never wrap it in markdown or code blocks".to_string());
+    lines.push("- NEVER use NO_REPLY after receiving tool output — always summarize or act on the result".to_string());
     lines.push(String::new());
     lines.push(format!("Wrong: \"Here's help... {}\"", SILENT_REPLY_TOKEN));
     lines.push(format!("Wrong: \"{}\"", SILENT_REPLY_TOKEN));

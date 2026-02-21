@@ -1440,101 +1440,103 @@ impl Agent {
     }
 
     fn stream_with_tool_loop(&mut self) -> impl futures::Stream<Item = Result<StreamEvent>> + '_ {
-        async_stream::stream! {
-            let max_tool_iterations = 10;
-            let mut iteration = 0;
+    async_stream::stream! {
+        let max_tool_iterations = 10;
+        let mut iteration = 0;
 
-            loop {
-                iteration += 1;
-                if iteration > max_tool_iterations {
-                    yield Err(anyhow::anyhow!("Max tool iterations exceeded"));
-                    break;
-                }
+        loop {
+            iteration += 1;
+            if iteration > max_tool_iterations {
+                yield Err(anyhow::anyhow!("Max tool iterations exceeded"));
+                break;
+            }
 
-                // Get tool schemas
-                let tool_schemas = self.tool_schemas_for_provider();
+            // Get tool schemas
+            let tool_schemas = self.tool_schemas_for_provider();
 
-                // Build messages for LLM (with per-turn security block)
-                let messages = self.messages_for_api_call();
+            // Build messages for LLM (with per-turn security block)
+            let messages = self.messages_for_api_call();
 
-                // Try streaming first (without tools since most providers don't support tool streaming)
-                // Then check for tool calls in the response
-                let response = self
-                    .provider
-                    .chat(&messages, Some(tool_schemas.as_slice()))
-                    .await;
+            // Try streaming first (without tools since most providers don't support tool streaming)
+            // Then check for tool calls in the response
+            let response = self
+                .provider
+                .chat(&messages, Some(tool_schemas.as_slice()))
+                .await;
 
-                match response {
-                    Ok(resp) => {
-                        // Track usage
-                        self.add_usage(resp.usage);
+            match response {
+                Ok(resp) => {
+                    // Track usage
+                    self.add_usage(resp.usage);
 
-                        match resp.content {
-                            LLMResponseContent::Text(text) => {
-                                // No tool calls - yield the text and we're done
-                                yield Ok(StreamEvent::Content(text.clone()));
-                                yield Ok(StreamEvent::Done);
+                    match resp.content {
+                        LLMResponseContent::Text(text) => {
+                            // No tool calls - yield the text and we're done
+                            yield Ok(StreamEvent::Content(text.clone()));
+                            yield Ok(StreamEvent::Done);
 
-                                // Add to session
-                                self.session.add_message(Message {
-                                    role: Role::Assistant,
-                                    content: text,
-                                    tool_calls: None,
-                                    tool_call_id: None,
-                                    images: Vec::new(),
-                                });
-                                break;
-                            }
-                            LLMResponseContent::ToolCalls(calls) => {
-
-
-                        // Add assistant message with tool_calls FIRST
-                        self.session.add_message(Message {
-                            role: Role::Assistant,
-                            content: String::new(),
-                            tool_calls: Some(calls.clone()),  // need clone since calls is used below
-                            tool_call_id: None,
-                            images: Vec::new(),
-                        });
-                        for call in &calls {
-                            yield Ok(StreamEvent::ToolCallStart {
-                                name: call.name.clone(),
-                                id: call.id.clone(),
-                                arguments: call.arguments.clone(),
-                            });
-
-                            // Execute tool
-                            let result = self.execute_tool(call).await;
-                            let (output, warnings) = match result {
-                                Ok((content, warnings)) => (content, warnings),
-                                Err(e) => (format!("Error: {}", e), Vec::new()),
-                            };
-
-                            yield Ok(StreamEvent::ToolCallEnd {
-                                name: call.name.clone(),
-                                id: call.id.clone(),
-                                output: output.clone(),
-                                warnings,
-                            });
-
-                            // Add tool call message to session
+                            // Add to session
                             self.session.add_message(Message {
-                                role: Role::Tool,
-                                content: output,
+                                role: Role::Assistant,
+                                content: text,
                                 tool_calls: None,
-                                tool_call_id: Some(call.id.clone()),
+                                tool_call_id: None,
                                 images: Vec::new(),
                             });
+                            break;
+                        }
+                        LLMResponseContent::ToolCalls(calls) => {
+                            // Add assistant message with tool_calls FIRST
+                            self.session.add_message(Message {
+                                role: Role::Assistant,
+                                content: String::new(),
+                                tool_calls: Some(calls.clone()),
+                                tool_call_id: None,
+                                images: Vec::new(),
+                            });
+
+                            for call in &calls {
+                                yield Ok(StreamEvent::ToolCallStart {
+                                    name: call.name.clone(),
+                                    id: call.id.clone(),
+                                    arguments: call.arguments.clone(),
+                                });
+
+                                // Execute tool
+                                let result = self.execute_tool(call).await;
+                                let (output, warnings) = match result {
+                                    Ok((content, warnings)) => (content, warnings),
+                                    Err(e) => (format!("Error: {}", e), Vec::new()),
+                                };
+
+                                yield Ok(StreamEvent::ToolCallEnd {
+                                    name: call.name.clone(),
+                                    id: call.id.clone(),
+                                    output: output.clone(),
+                                    warnings,
+                                });
+
+                                // Add tool result to session
+                                self.session.add_message(Message {
+                                    role: Role::Tool,
+                                    content: output,
+                                    tool_calls: None,
+                                    tool_call_id: Some(call.id.clone()),
+                                    images: Vec::new(),
+                                });
+                            }
+                            // Continue loop to get next response
                         }
                     }
-                    Err(e) => {
-                        yield Err(e);
-                        break;
-                    }
+                }
+                Err(e) => {
+                    yield Err(e);
+                    break;
                 }
             }
         }
     }
+}
 
     /// Get tool schemas for external use
     pub fn tool_schemas(&self) -> Vec<ToolSchema> {
