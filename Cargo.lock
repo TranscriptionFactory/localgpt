@@ -5490,6 +5490,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "localgpt-bridge-telegram"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "chrono",
+ "futures",
+ "localgpt-bridge",
+ "localgpt-core",
+ "serde",
+ "serde_json",
+ "tarpc",
+ "teloxide",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
 name = "localgpt-core"
 version = "0.3.0"
 dependencies = [
