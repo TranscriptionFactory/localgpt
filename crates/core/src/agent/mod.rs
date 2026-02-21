@@ -1486,7 +1486,16 @@ impl Agent {
                                 break;
                             }
                             LLMResponseContent::ToolCalls(calls) => {
-                        // Notify about tool calls
+
+
+                        // Add assistant message with tool_calls FIRST
+                        self.session.add_message(Message {
+                            role: Role::Assistant,
+                            content: String::new(),
+                            tool_calls: Some(calls.clone()),  // need clone since calls is used below
+                            tool_call_id: None,
+                            images: Vec::new(),
+                        });
                         for call in &calls {
                             yield Ok(StreamEvent::ToolCallStart {
                                 name: call.name.clone(),
@@ -1508,7 +1517,7 @@ impl Agent {
                                 warnings,
                             });
 
-                            // Add tool result to session
+                            // Add tool call message to session
                             self.session.add_message(Message {
                                 role: Role::Tool,
                                 content: output,
@@ -1516,19 +1525,6 @@ impl Agent {
                                 tool_call_id: Some(call.id.clone()),
                                 images: Vec::new(),
                             });
-                        }
-
-                        // Add tool call message to session
-                        self.session.add_message(Message {
-                            role: Role::Assistant,
-                            content: String::new(),
-                            tool_calls: Some(calls),
-                            tool_call_id: None,
-                            images: Vec::new(),
-                        });
-
-                        // Continue loop to get next response
-                            }
                         }
                     }
                     Err(e) => {
